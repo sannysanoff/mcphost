@@ -10,3 +10,5 @@ build/
 scripts/
 dist/
 contribute/output/
+mcp.json
+mcphost.go

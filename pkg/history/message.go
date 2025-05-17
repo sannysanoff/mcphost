@@ -5,13 +5,19 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcphost/pkg/llm"
+	_ "gopkg.in/yaml.v3" // Used for YAML struct tags, actual (un)marshalling happens elsewhere
 )
 
 // HistoryMessage implements the llm.Message interface for stored messages
 type HistoryMessage struct {
-	Role    string         `json:"role"`
-	Content []ContentBlock `json:"content"`
+	ID         int            `json:"id" yaml:"id"`
+	PreviousID int            `json:"previous_id" yaml:"previous_id"`
+	Role       string         `json:"role" yaml:"role"`
+	Content    []ContentBlock `json:"content" yaml:"content"`
 }
+
+// Ensure HistoryMessage implements yaml.Marshaler and yaml.Unmarshaler if custom logic is needed.
+// For now, relying on struct tags.
 
 func (m *HistoryMessage) GetRole() string {
 	return m.Role
@@ -89,11 +95,14 @@ func (t *HistoryToolCall) GetArguments() map[string]interface{} {
 
 // ContentBlock represents a block of content in a message
 type ContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	Content   interface{}     `json:"content,omitempty"`
+	Type      string          `json:"type" yaml:"type"`
+	Text      string          `json:"text,omitempty" yaml:"text,omitempty"`
+	ID        string          `json:"id,omitempty" yaml:"id,omitempty"`       // Used for tool_use block
+	ToolUseID string          `json:"tool_use_id,omitempty" yaml:"tool_use_id,omitempty"` // Used for tool_result block
+	Name      string          `json:"name,omitempty" yaml:"name,omitempty"`       // Used for tool_use block
+	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty"`     // Used for tool_use block
+	Content   interface{}     `json:"content,omitempty" yaml:"content,omitempty"` // Used for tool_result block, can be string or []ContentBlock
 }
+
+// Ensure ContentBlock implements yaml.Marshaler and yaml.Unmarshaler if custom logic for json.RawMessage or interface{} is needed.
+// For now, relying on struct tags and default behavior of yaml.v3.
