@@ -782,11 +782,50 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		)
 	}
 
-	if err := updateRenderer(); err != nil {
-		return fmt.Errorf("error initializing renderer: %v", err)
+	messages := make([]history.HistoryMessage, 0)
+
+	if userPromptCLI != "" {
+		// Non-interactive mode: process the single prompt and exit
+		log.Info("Running in non-interactive mode with provided user prompt.", "prompt", userPromptCLI)
+
+		// runPrompt with isInteractive=false will use logging for output.
+		// It modifies 'messages' in place.
+		err := runPrompt(ctx, provider, mcpClients, allTools, userPromptCLI, &messages, cliTweaker, false)
+		if err != nil {
+			// Error is already logged by runPrompt or its callees.
+			// Return the error to indicate failure to the main Execute function.
+			return fmt.Errorf("error processing non-interactive prompt: %w", err)
+		}
+
+		// Print the assistant's final textual response to stdout.
+		// Search backwards for the last assistant message with text content.
+		var lastAssistantText string
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "assistant" {
+				for _, contentBlock := range messages[i].Content {
+					if contentBlock.Type == "text" && contentBlock.Text != "" {
+						lastAssistantText = contentBlock.Text
+						break
+					}
+				}
+				if lastAssistantText != "" {
+					break
+				}
+			}
+		}
+
+		if lastAssistantText != "" {
+			fmt.Println(lastAssistantText) // Print raw text to stdout
+		} else {
+			log.Info("No final text response from assistant to print for non-interactive mode.")
+		}
+		return nil // Successful non-interactive run
 	}
 
-	messages := make([]history.HistoryMessage, 0)
+	// Interactive mode
+	if err := updateRenderer(); err != nil {
+		return fmt.Errorf("error initializing renderer for interactive mode: %v", err)
+	}
 
 	// Main interaction loop
 	for {
@@ -832,17 +871,9 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		// Pass cliTweaker and true for isInteractive
 		err = runPrompt(ctx, provider, mcpClients, allTools, prompt, &messages, cliTweaker, true)
 		if err != nil {
-			// In interactive mode, errors are usually printed by runPrompt or its callees.
-			// If a fatal error that runPrompt couldn't handle nicely, then return it.
-			// For now, assume runPrompt's error handling is sufficient for user feedback.
-			log.Error("Error from runPrompt", "error", err)
-			// Decide if this error should terminate the CLI or allow continuation.
-			// For now, let's print it and allow continuation.
+			log.Error("Error from runPrompt in interactive mode", "error", err)
 			fmt.Printf("\n%s\n", errorStyle.Render(fmt.Sprintf("Error: %v", err)))
-			// return err // Original behavior: terminate on error.
-			// Let's allow continuing the loop for now, user can Ctrl+C.
-			// If we want to terminate:
-			// return fmt.Errorf("error during prompt execution: %w", err)
+			// Continue loop in interactive mode even after an error.
 		}
 	}
 }
