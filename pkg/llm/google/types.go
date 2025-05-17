@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/generative-ai-go/genai"
 	"github.com/mark3labs/mcphost/pkg/llm"
+	"google.golang.org/genai"
 )
 
 type ToolCall struct {

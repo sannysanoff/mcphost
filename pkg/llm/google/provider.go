@@ -6,19 +6,16 @@ import (
 	"fmt"
 	"strings"
 
-	"google.golang.org/genai"
-	//"github.com/google/generative-ai-go/genai"
 	"github.com/mark3labs/mcphost/pkg/history"
 	"github.com/mark3labs/mcphost/pkg/llm"
-	"google.golang.org/api/option"
+	"google.golang.org/genai"
 )
 
 type Provider struct {
-	client *genai.Client
-	model  *genai.GenerativeModel
-	chat   *genai.ChatSession
-
-	toolCallID int // This might need to be a string if IDs are not sequential integers
+	client       *genai.Client
+	model        string
+	systemPrompt string
+	toolCallID   int // This might need to be a string if IDs are not sequential integers
 }
 
 func NewProvider(ctx context.Context, apiKey, model, systemPrompt string) (*Provider, error) {
@@ -34,25 +31,53 @@ func NewProvider(ctx context.Context, apiKey, model, systemPrompt string) (*Prov
 	if err != nil {
 		return nil, err
 	}
-	m := client.GenerativeModel(model)
-	// If systemPrompt is provided, set the system prompt for the model.
-	if systemPrompt != "" {
-		// Assuming system prompt takes the "user" role, or a default if "" is fine.
-		// types.go NewContentFromText defaults to user role if role is empty.
-		m.SystemInstruction = genai.NewContentFromText(systemPrompt, "")
-	}
 	return &Provider{
-		client: client,
-		model:  m,
-		chat:   m.StartChat(),
+		client:       client,
+		model:        model,
+		systemPrompt: systemPrompt,
 	}, nil
 }
 
 func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []llm.Message, tools []llm.Tool) (llm.Message, error) {
+
+	thinkingBudget := int32(100)
+	var config *genai.GenerateContentConfig = &genai.GenerateContentConfig{
+		HTTPOptions:          nil,
+		SystemInstruction:    nil,
+		Temperature:          genai.Ptr[float32](0.5),
+		TopP:                 nil,
+		TopK:                 nil,
+		CandidateCount:       0,
+		MaxOutputTokens:      0,
+		StopSequences:        nil,
+		ResponseLogprobs:     false,
+		Logprobs:             nil,
+		PresencePenalty:      nil,
+		FrequencyPenalty:     nil,
+		Seed:                 nil,
+		ResponseMIMEType:     "",
+		ResponseSchema:       nil,
+		RoutingConfig:        nil,
+		ModelSelectionConfig: nil,
+		SafetySettings:       nil,
+		Tools:                nil,
+		ToolConfig:           nil,
+		Labels:               nil,
+		CachedContent:        "",
+		ResponseModalities:   nil,
+		MediaResolution:      "",
+		SpeechConfig:         nil,
+		AudioTimestamp:       false,
+		ThinkingConfig: &genai.ThinkingConfig{
+			IncludeThoughts: true,
+			ThinkingBudget:  &thinkingBudget,
+		},
+	}
+
 	var hist []*genai.Content
 	for _, msg := range messages {
 		role := mappingRole(msg.GetRole())
-		var parts []genai.Part
+		var parts []*genai.Part
 
 		isToolResponse := msg.IsToolResponse()
 		toolCalls := msg.GetToolCalls()
@@ -121,9 +146,10 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 		}
 	}
 
-	p.model.Tools = nil
+	chat, err := p.client.Chats.Create(ctx, p.model, config, nil)
+
 	for _, tool := range tools {
-		p.model.Tools = append(p.model.Tools, &genai.Tool{
+		config.Tools = append(config.Tools, &genai.Tool{
 			FunctionDeclarations: []*genai.FunctionDeclaration{
 				{
 					Name:        tool.Name,
@@ -134,15 +160,14 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 		})
 	}
 
-	p.chat.History = hist
-	p.model.ToolConfig = &genai.ToolConfig{
+	config.ToolConfig = &genai.ToolConfig{
 		FunctionCallingConfig: &genai.FunctionCallingConfig{
 			Mode: genai.FunctionCallingConfigModeAuto, // Use new constant
 		}}
 
 	// Send the new prompt as a distinct part.
 	promptPart := genai.NewPartFromText(prompt)
-	resp, err := p.chat.SendMessage(ctx, *promptPart)
+	resp, err := chat.SendMessage(ctx, *promptPart)
 	if err != nil {
 		return nil, err
 	}
