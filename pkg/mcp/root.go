@@ -57,6 +57,7 @@ var (
 	jobMutex         sync.Mutex
 	currentJobCtx    context.Context
 	currentJobCancel context.CancelFunc
+	userPromptCLI    string // For --user-prompt flag
 )
 
 const (
@@ -207,6 +208,9 @@ func init() {
 	// Server mode flags
 	rootCmd.Flags().BoolVar(&serverMode, "server", false, "Run in server mode")
 	rootCmd.Flags().IntVar(&serverPort, "port", 9262, "Port for server mode")
+
+	// CLI direct prompt flag
+	rootCmd.Flags().StringVar(&userPromptCLI, "user-prompt", "", "User prompt to send directly. If specified, runs non-interactively and exits after response.")
 }
 
 // createProvider initializes an LLM provider based on the model ID and models configuration.
