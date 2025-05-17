@@ -75,6 +75,25 @@ def get_status():
             except json.JSONDecodeError:
                 print(f"Raw Server Response: {e.response.text}")
 
+def get_agents():
+    """
+    Gets the list of available agents from the mcphost server.
+    """
+    url = f"{BASE_URL}/agents"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        print("Available Agents Response:")
+        pretty_print_json(response.json())
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting agents: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                print("Server Response:")
+                pretty_print_json(e.response.json())
+            except json.JSONDecodeError:
+                print(f"Raw Server Response: {e.response.text}")
+
 def get_models():
     """
     Gets the list of available models from the mcphost server.
@@ -114,6 +133,9 @@ def main():
     # Models command
     models_parser = subparsers.add_parser("models", help="List available models from the server")
 
+    # Agents command
+    agents_parser = subparsers.add_parser("agents", help="List available agents from the server")
+
     args = parser.parse_args()
 
     if args.command == "start":
@@ -124,6 +146,8 @@ def main():
         get_status()
     elif args.command == "models":
         get_models()
+    elif args.command == "agents":
+        get_agents()
     else:
         parser.print_help()
 
