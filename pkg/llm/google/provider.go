@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/genai"
+	//"github.com/google/generative-ai-go/genai"
 	"github.com/mark3labs/mcphost/pkg/history"
 	"github.com/mark3labs/mcphost/pkg/llm"
 	"google.golang.org/api/option"
@@ -86,9 +87,14 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 	}
 
 	p.chat.History = hist
+	p.model.ToolConfig = &genai.ToolConfig{
+
+		FunctionCallingConfig: &genai.FunctionCallingConfig{
+			Mode: genai.FunctionCallingAuto,
+		}}
 	// The provided messages slice (and thus history) already includes the new prompt,
 	// so we just call SendMessage with an empty string that will be trimmed by the server.
-	resp, err := p.chat.SendMessage(ctx, genai.Text(""))
+	resp, err := p.chat.SendMessage(ctx, genai.Text(prompt))
 	if err != nil {
 		return nil, err
 	}
