@@ -92,17 +92,17 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 		if isToolResponse {
 			// This message is a tool response (incoming to model)
 			if historyMsg, ok := msg.(*history.HistoryMessage); ok {
-				// Assuming historyMsg.ToolName is populated for tool responses
-				funcName := historyMsg.ToolName
-				if funcName == "" {
-					// Attempt to get it from a block if available, though ToolName on msg is preferred
-					for _, block := range historyMsg.Content {
-						if block.Type == "tool_result" && block.Name != "" { // Assuming block.Name exists
-							funcName = block.Name
-							break
-						}
+				var funcName string
+				// Attempt to get the function name from a content block.
+				// It's assumed that for a "tool_result", the 'Name' field of the ContentBlock
+				// will be populated with the name of the function that was called.
+				for _, block := range historyMsg.Content {
+					if block.Type == "tool_result" && block.Name != "" {
+						funcName = block.Name
+						break
 					}
 				}
+
 				if funcName == "" {
 					return nil, fmt.Errorf("tool response message missing function name: %+v", historyMsg)
 				}

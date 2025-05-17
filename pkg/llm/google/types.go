@@ -38,9 +38,12 @@ func (m *Message) GetRole() string {
 
 func (m *Message) GetContent() string {
 	var sb strings.Builder
-	for _, part := range m.Candidate.Content.Parts {
-		if text, ok := part.(genai.Text); ok {
-			sb.WriteString(string(text))
+	if m.Candidate != nil && m.Candidate.Content != nil {
+		for _, part := range m.Candidate.Content.Parts {
+			// Direct access to Text field for *genai.Part
+			if part.Text != "" {
+				sb.WriteString(part.Text)
+			}
 		}
 	}
 	return sb.String()
@@ -48,16 +51,26 @@ func (m *Message) GetContent() string {
 
 func (m *Message) GetToolCalls() []llm.ToolCall {
 	var calls []llm.ToolCall
-	for i, call := range m.Candidate.FunctionCalls() {
-		calls = append(calls, &ToolCall{call, m.toolCallID + i})
+	if m.Candidate != nil && m.Candidate.Content != nil {
+		for i, part := range m.Candidate.Content.Parts {
+			if part.FunctionCall != nil {
+				// Create a new genai.FunctionCall instance for the ToolCall struct
+				// as genai.FunctionCall is a struct, not a pointer in Part.
+				fc := *part.FunctionCall 
+				calls = append(calls, &ToolCall{fc, m.toolCallID + i})
+			}
+		}
 	}
 	return calls
 }
 
 func (m *Message) IsToolResponse() bool {
-	for _, part := range m.Candidate.Content.Parts {
-		if _, ok := part.(*genai.FunctionResponse); ok {
-			return true
+	if m.Candidate != nil && m.Candidate.Content != nil {
+		for _, part := range m.Candidate.Content.Parts {
+			// Direct access to FunctionResponse field for *genai.Part
+			if part.FunctionResponse != nil {
+				return true
+			}
 		}
 	}
 	return false
