@@ -15,6 +15,8 @@ import (
 
 type Provider struct {
 	client *genai.Client
+	model  *genai.GenerativeModel
+	chat   *genai.ChatSession
 
 	toolCallID int // This might need to be a string if IDs are not sequential integers
 }
