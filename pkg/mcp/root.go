@@ -29,7 +29,6 @@ import (
 	"github.com/mark3labs/mcphost/pkg/llm/openai"
 	"github.com/spf13/cobra"
 
-	agentshandler "github.com/mark3labs/mcphost/agents" // Added for /agents endpoint
 	"golang.org/x/term"
 	"net/http"  // Added for HTTP server
 	"os/signal" // Added for signal handling
@@ -188,7 +187,7 @@ var debugMode bool
 
 func init() {
 	rootCmd.PersistentFlags().
-		StringVar(&configFile, "config", "", "config file (default is $HOME/.mcp.json)")
+		StringVar(&configFile, "config", "", "config file (default is $HOME/mcp.json)")
 	rootCmd.PersistentFlags().
 		StringVar(&systemPromptFile, "system-prompt", "", "system prompt json file")
 	rootCmd.PersistentFlags().
@@ -203,16 +202,11 @@ func init() {
 	rootCmd.PersistentFlags().
 		BoolVar(&debugMode, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().
-		StringVar(&tracesDir, "traces", "", "directory to store trace files (required)")
+		StringVar(&tracesDir, "traces", "./traces", "directory to store trace files (required)")
 
 	// Server mode flags
 	rootCmd.Flags().BoolVar(&serverMode, "server", false, "Run in server mode")
 	rootCmd.Flags().IntVar(&serverPort, "port", 9262, "Port for server mode")
-
-	// Mark --traces as required: Validation is done in RunE.
-	// Mark --model as required for CLI mode (if no default is set and it's always needed)
-	// This can also be checked in RunE. If a default is set, it's not strictly "required" by the flag parser.
-	// For now, we'll check in RunE if modelFlag is empty for CLI mode.
 }
 
 // createProvider initializes an LLM provider based on the model ID and models configuration.
@@ -949,7 +943,7 @@ func runServerMode(ctx context.Context, modelsCfg *ModelsConfig) error {
 	mux.HandleFunc("/models", func(w http.ResponseWriter, r *http.Request) {
 		handleListModels(w, r, modelsCfg)
 	})
-	mux.HandleFunc("/agents", agentshandler.HandleListAgents) // Added /agents route
+	mux.HandleFunc("/agents", HandleListAgents) // Added /agents route
 
 	serverAddr := fmt.Sprintf(":%d", serverPort)
 	srv := &http.Server{
