@@ -15,14 +15,20 @@ import (
 
 type Provider struct {
 	client *genai.Client
-	model  *genai.GenerativeModel
-	chat   *genai.ChatSession
 
 	toolCallID int // This might need to be a string if IDs are not sequential integers
 }
 
 func NewProvider(ctx context.Context, apiKey, model, systemPrompt string) (*Provider, error) {
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      apiKey,
+		Backend:     0,
+		Project:     "",
+		Location:    "",
+		Credentials: nil,
+		HTTPClient:  nil,
+		HTTPOptions: genai.HTTPOptions{},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +207,7 @@ func translateToGoogleSchema(schema llm.Schema) *genai.Schema {
 	// Workaround for Gemini API: properties should be non-empty for OBJECT type.
 	// Apply this only if the original schema intended an object type with no properties.
 	if s.Type == genai.TypeObject && (schema.Properties == nil || len(schema.Properties) == 0) && len(s.Properties) == 0 {
-		s.Nullable = genai.Ptr(true) // Use Ptr for bool
+		s.Nullable = genai.Ptr(true)                                  // Use Ptr for bool
 		s.Properties["unused_placeholder_parameter"] = &genai.Schema{ // More descriptive name
 			Type:        genai.TypeString, // String is often safer/simpler than Integer for placeholders
 			Description: "This is a placeholder parameter to satisfy API requirements for empty objects. It should be ignored.",
