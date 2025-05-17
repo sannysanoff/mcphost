@@ -42,7 +42,7 @@ var (
 
 	// Shared flags/config
 	configFile       string
-	systemPromptFile string
+	// systemPromptFile string // Removed
 	messageWindow    int
 	modelFlag        string // Model ID (from models.yaml)
 	tracesDir        string // Directory for trace files
@@ -189,8 +189,8 @@ var debugMode bool
 func init() {
 	rootCmd.PersistentFlags().
 		StringVar(&configFile, "config", "", "config file (default is $HOME/mcp.json)")
-	rootCmd.PersistentFlags().
-		StringVar(&systemPromptFile, "system-prompt", "", "system prompt json file")
+	// rootCmd.PersistentFlags().
+	// 	StringVar(&systemPromptFile, "system-prompt", "", "system prompt json file") // Removed
 	rootCmd.PersistentFlags().
 		IntVar(&messageWindow, "message-window", 10, "number of messages to keep in context")
 	rootCmd.PersistentFlags().
@@ -714,10 +714,20 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	// For now, keep it in context for broader compatibility during refactoring.
 	ctx = context.WithValue(ctx, PromptRuntimeTweaksKey, cliTweaker)
 
-	systemPrompt, err := loadSystemPrompt(systemPromptFile)
-	if err != nil {
-		return fmt.Errorf("error loading system prompt: %v", err)
-	}
+	// System prompt will be fetched from the default agent or set by other means.
+	// For now, initialize as empty for CLI mode. Server mode handles it via request.
+	systemPrompt := ""
+	// TODO: Implement fetching system prompt from default agent.
+	// This would involve:
+	// 1. Defining how to identify the "default" agent (e.g., from /agents endpoint).
+	// 2. Fetching agent details and extracting its system prompt.
+	// Example placeholder:
+	// defaultAgentSystemPrompt, err := fetchDefaultAgentSystemPrompt()
+	// if err != nil {
+	//     log.Warn("Could not fetch default agent system prompt", "error", err)
+	// } else {
+	//     systemPrompt = defaultAgentSystemPrompt
+	// }
 
 	// Create the provider using the model ID from modelFlag and the loaded modelsCfg
 	provider, err := createProvider(ctx, modelFlag, systemPrompt, modelsCfg)
@@ -876,28 +886,6 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 			// Continue loop in interactive mode even after an error.
 		}
 	}
-}
-
-// loadSystemPrompt loads the system prompt from a JSON file
-func loadSystemPrompt(filePath string) (string, error) {
-	if filePath == "" {
-		return "", nil
-	}
-
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return "", fmt.Errorf("error reading config file: %v", err)
-	}
-
-	// Parse only the systemPrompt field
-	var config struct {
-		SystemPrompt string `json:"systemPrompt"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("error parsing config file: %v", err)
-	}
-
-	return config.SystemPrompt, nil
 }
 
 // --- Server Mode Implementation ---
