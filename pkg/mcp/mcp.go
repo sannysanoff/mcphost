@@ -72,10 +72,17 @@ type ServerConfig interface {
 	GetType() string
 }
 
+// MCPClientWithConfig extends the basic MCP client with config access
+type MCPClientWithConfig interface {
+	mcpclient.MCPClient
+	GetConfig() ServerConfig
+}
+
 type STDIOServerConfig struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
 	Env     map[string]string `json:"env,omitempty"`
+	RateLimit float64         `json:"rate_limit,omitempty"` // Max requests per second
 }
 
 func (s STDIOServerConfig) GetType() string {
@@ -83,8 +90,9 @@ func (s STDIOServerConfig) GetType() string {
 }
 
 type SSEServerConfig struct {
-	Url     string   `json:"url"`
-	Headers []string `json:"headers,omitempty"`
+	Url       string   `json:"url"`
+	Headers   []string `json:"headers,omitempty"`
+	RateLimit float64  `json:"rate_limit,omitempty"` // Max requests per second
 }
 
 func (s SSEServerConfig) GetType() string {
@@ -199,6 +207,16 @@ func loadMCPConfig() (*MCPConfig, error) {
 	return &config, nil
 }
 
+// configurableMCPClient wraps an MCP client with its config
+type configurableMCPClient struct {
+	mcpclient.MCPClient
+	config ServerConfig
+}
+
+func (c *configurableMCPClient) GetConfig() ServerConfig {
+	return c.config
+}
+
 func createMCPClients(
 	config *MCPConfig,
 ) (map[string]mcpclient.MCPClient, error) {
@@ -240,10 +258,17 @@ func createMCPClients(
 			for k, v := range stdioConfig.Env {
 				env = append(env, fmt.Sprintf("%s=%s", k, v))
 			}
-			client, err = mcpclient.NewStdioMCPClient(
+			baseClient, err := mcpclient.NewStdioMCPClient(
 				stdioConfig.Command,
 				env,
 				stdioConfig.Args...)
+			if err == nil {
+				// Wrap the client to include config
+				client = &configurableMCPClient{
+					MCPClient: baseClient,
+					config:    stdioConfig,
+				}
+			}
 		}
 		if err != nil {
 			for _, c := range clients {

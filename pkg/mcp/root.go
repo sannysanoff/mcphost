@@ -559,7 +559,25 @@ func runPrompt(
 		}
 
 		var toolResultPtr *mcp.CallToolResult
+		// Get rate limit from config if available
+		var rateLimit time.Duration
+		if serverConfig, ok := mcpClients[serverName].(interface{ GetConfig() ServerConfig }); ok {
+			if cfg := serverConfig.GetConfig(); cfg != nil {
+				if cfg.GetType() == transportStdio {
+					if stdioCfg, ok := cfg.(STDIOServerConfig); ok && stdioCfg.RateLimit > 0 {
+						rateLimit = time.Duration(float64(time.Second) / stdioCfg.RateLimit)
+					}
+				} else if sseCfg, ok := cfg.(SSEServerConfig); ok && sseCfg.RateLimit > 0 {
+					rateLimit = time.Duration(float64(time.Second) / sseCfg.RateLimit)
+				}
+			}
+		}
+
 		toolAction := func() { // Renamed to toolAction to avoid conflict
+			// Apply rate limiting if configured
+			if rateLimit > 0 {
+				time.Sleep(rateLimit)
+			}
 			req := mcp.CallToolRequest{}
 			req.Params.Name = toolName
 			req.Params.Arguments = toolArgs
