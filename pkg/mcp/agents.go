@@ -40,26 +40,47 @@ type yaegiAgent struct {
 	cachedPrompt string
 }
 
-func (a *yaegiAgent) GetSystemPrompt() string {
+func (a *yaegiAgent) checkAndReload() error {
 	now := time.Now().Unix()
-	if now-a.lastCheck < 1 && a.cachedPrompt != "" {
-		return a.cachedPrompt
+	if now-a.lastCheck < 1 {
+		return nil
 	}
 
-	// Check file modification time
 	info, err := os.Stat(a.fullPath)
 	if err != nil {
-		log.Error("Failed to stat agent file", "file", a.fullPath, "error", err)
+		return fmt.Errorf("failed to stat agent file: %w", err)
+	}
+
+	if info.ModTime().After(a.lastModTime) {
+		// File changed - re-evaluate
+		content, err := os.ReadFile(a.fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read agent file: %w", err)
+		}
+
+		_, err = a.interpreter.Eval(string(content))
+		if err != nil {
+			return fmt.Errorf("failed to evaluate agent code: %w", err)
+		}
+
+		a.lastModTime = info.ModTime()
+		a.cachedPrompt = "" // Invalidate cache
+	}
+
+	a.lastCheck = now
+	return nil
+}
+
+func (a *yaegiAgent) GetSystemPrompt() string {
+	if err := a.checkAndReload(); err != nil {
+		log.Error("Failed to check/reload agent", "agent", a.filename, "error", err)
 		return ""
 	}
 
-	// If file hasn't changed and we have cached prompt, return it
-	if !info.ModTime().After(a.lastModTime) && a.cachedPrompt != "" {
-		a.lastCheck = now
+	if a.cachedPrompt != "" {
 		return a.cachedPrompt
 	}
 
-	// File changed or no cache - re-evaluate
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
 	promptFuncName := makePascalCase(baseName) + "GetPrompt"
 
@@ -71,8 +92,6 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 	}
 
 	if val.Kind() == reflect.String {
-		a.lastModTime = info.ModTime()
-		a.lastCheck = now
 		a.cachedPrompt = val.String()
 		return a.cachedPrompt
 	}
@@ -80,6 +99,11 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 }
 
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+	if err := a.checkAndReload(); err != nil {
+		log.Error("Failed to check/reload agent", "agent", a.filename, "error", err)
+		return messages
+	}
+
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
 	normalizeFuncName := makePascalCase(baseName) + "NormalizeHistory"
 
