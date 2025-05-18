@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"os"
 	"path/filepath"
 	"time"
@@ -17,8 +18,6 @@ import (
 
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcphost/pkg/history"
-	"github.com/mark3labs/mcphost/pkg/llm"
 )
 
 const (
@@ -79,10 +78,10 @@ type MCPClientWithConfig interface {
 }
 
 type STDIOServerConfig struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args"`
-	Env     map[string]string `json:"env,omitempty"`
-	RateLimit float64         `json:"rate_limit,omitempty"` // Max requests per second
+	Command   string            `json:"command"`
+	Args      []string          `json:"args"`
+	Env       map[string]string `json:"env,omitempty"`
+	RateLimit float64           `json:"rate_limit,omitempty"` // Max requests per second
 }
 
 func (s STDIOServerConfig) GetType() string {
@@ -136,16 +135,16 @@ func (w ServerConfigWrapper) MarshalJSON() ([]byte, error) {
 func mcpToolsToAnthropicTools(
 	serverName string,
 	mcpTools []mcp.Tool,
-) []llm.Tool {
-	anthropicTools := make([]llm.Tool, len(mcpTools))
+) []history.Tool {
+	anthropicTools := make([]history.Tool, len(mcpTools))
 
 	for i, tool := range mcpTools {
 		namespacedName := fmt.Sprintf("%s__%s", serverName, tool.Name)
 
-		anthropicTools[i] = llm.Tool{
+		anthropicTools[i] = history.Tool{
 			Name:        namespacedName,
 			Description: tool.Description,
-			InputSchema: llm.Schema{
+			InputSchema: history.Schema{
 				Type:       tool.InputSchema.Type,
 				Properties: tool.InputSchema.Properties,
 				Required:   tool.InputSchema.Required,
