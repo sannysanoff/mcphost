@@ -13,6 +13,7 @@ type HistoryMessage struct {
 	PreviousID int            `json:"previous_id" yaml:"previous_id"`
 	Role       string         `json:"role" yaml:"role"`
 	Content    []ContentBlock `json:"content" yaml:"content"`
+	Synthetic  string         `json:"synthetic,omitempty" yaml:"synthetic,omitempty"` // Information about agent/phase acting as user
 }
 
 // Ensure HistoryMessage implements yaml.Marshaler and yaml.Unmarshaler if custom logic is needed.
