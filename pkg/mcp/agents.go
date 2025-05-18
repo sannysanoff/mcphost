@@ -139,6 +139,12 @@ func loadAgentFromFile(agentFilePath string) (Agent, error) {
 		return nil, fmt.Errorf("failed to read agent file %s: %w", agentFilePath, err)
 	}
 
+	// Get file info for mod time
+	info, err := os.Stat(agentFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat agent file %s: %w", agentFilePath, err)
+	}
+
 	// Evaluate the agent's Go code
 	_, err = i.Eval(string(agentFileContent))
 	if err != nil {
@@ -150,6 +156,7 @@ func loadAgentFromFile(agentFilePath string) (Agent, error) {
 		fullPath:    agentFilePath,
 		interpreter: i,
 		lastCheck:   0,
+		lastModTime: info.ModTime(),
 	}, nil
 }
 
