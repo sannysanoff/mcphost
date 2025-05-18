@@ -94,6 +94,31 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 }
 
 func (a *yaegiAgent) GetTaskForModelSelection() string {
+	if err := a.checkAndReload(); err != nil {
+		log.Error("Failed to check/reload agent for task selection", "agent", a.filename, "error", err)
+		return "default"
+	}
+
+	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
+	taskFuncName := makePascalCase(baseName) + "GetTaskForModelSelection"
+
+	evalStr := fmt.Sprintf("agents.%s()", taskFuncName)
+	val, err := a.interpreter.Eval(evalStr)
+	if err != nil {
+		// Log if the error is not simply "symbol not found" which is an expected case.
+		// Yaegi's interp.Eval returns an error that includes "undefined" for missing symbols.
+		if !strings.Contains(err.Error(), "undefined") && !strings.Contains(err.Error(), "not found") {
+			log.Error("Failed to call task selection function", "agent", a.filename, "func", taskFuncName, "error", err)
+		} else {
+			log.Debug("Task selection function not found, using default", "agent", a.filename, "func", taskFuncName)
+		}
+		return "default"
+	}
+
+	if val.Kind() == reflect.String {
+		return val.String()
+	}
+	log.Warn("Task selection function did not return a string, using default", "agent", a.filename, "func", taskFuncName, "return_type", val.Kind())
 	return "default"
 }
 
