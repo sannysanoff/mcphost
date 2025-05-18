@@ -103,5 +103,24 @@ type ContentBlock struct {
 	Content   interface{}     `json:"content,omitempty" yaml:"content,omitempty"`         // Used for tool_result block, can be string or []ContentBlock
 }
 
+// NewToolCallMessage creates a new assistant message with a tool call request
+func NewToolCallMessage(toolName string, args map[string]interface{}) (*HistoryMessage, error) {
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &HistoryMessage{
+		Role: "assistant",
+		Content: []ContentBlock{
+			{
+				Type:  "tool_use",
+				Name:  toolName,
+				Input: argsJSON,
+			},
+		},
+	}, nil
+}
+
 // Ensure ContentBlock implements yaml.Marshaler and yaml.Unmarshaler if custom logic for json.RawMessage or interface{} is needed.
 // For now, relying on struct tags and default behavior of yaml.v3.
