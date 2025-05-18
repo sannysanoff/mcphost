@@ -44,7 +44,7 @@ var (
 	configFile string
 	// systemPromptFile string // Removed
 	messageWindow    int
-	modelFlag        string // Model ID (from models.yaml)
+	agentNameFlag    string // Agent name (e.g., "default")
 	tracesDir        string // Directory for trace files
 	modelsConfigFile string // Path to models.yaml
 
@@ -74,19 +74,19 @@ var rootCmd = &cobra.Command{
 through a unified interface. It supports various tools through MCP servers
 and provides streaming responses.
 
-Models are defined in a 'models.yaml' file. Specify the model ID using the --model flag (for CLI mode)
-or in the JSON payload (for server mode's /start endpoint).
+Model selection is driven by agents. Specify an agent using the --agent flag (default: "default").
+The agent determines a task, and MCPHost selects the best model for that task from 'models.yaml'.
 
 Example (CLI):
-  mcphost --models path/to/your/models.yaml -m claude-3-5-sonnet-latest
-  mcphost -m my-custom-ollama-model-id
+  mcphost --agent default --models path/to/your/models.yaml
+  mcphost --agent research_agent
 
 Server Mode:
   mcphost --server --traces /path/to/traces --models path/to/models.yaml [--port 9262]
   curl -X POST -H "Content-Type: application/json" \
-       -d '{"model_id": "claude-3-5-sonnet-latest", "system_message": "You are a helpful assistant.", "user_query": "Hello, world!"}' \
+       -d '{"agent_name": "default", "system_message": "You are a helpful assistant.", "user_query": "Hello, world!"}' \
        http://localhost:9262/start
-  # 'model_id' is optional in the /start payload. If omitted, the server will use the first model from models.yaml.
+  # 'agent_name' is optional in the /start payload. If omitted, the "default" agent will be used.
   curl http://localhost:9262/status
   curl http://localhost:9262/stop?id=TRACE_ID
   curl http://localhost:9262/models
@@ -122,58 +122,21 @@ Server Mode:
 		}
 		log.Info("Successfully loaded models configuration", "path", modelsConfigFile, "providers", len(loadedModelsConfig.Providers))
 
-		// Validate modelFlag - it should now be a model ID.
-		// Basic validation: ensure it doesn't look like a flag itself.
-		if strings.HasPrefix(modelFlag, "-") && modelFlag != "-" {
-			// Check if the value of modelFlag matches any known flag name.
-			isModelFlagLikelyConsumedAnotherFlag := false
-			checkFlag := func(f *pflag.Flag) {
-				if modelFlag == "--"+f.Name || (f.Shorthand != "" && modelFlag == "-"+f.Shorthand) {
-					isModelFlagLikelyConsumedAnotherFlag = true
-				}
-			}
-			cmd.PersistentFlags().VisitAll(checkFlag)
-			if !isModelFlagLikelyConsumedAnotherFlag {
-				cmd.Flags().VisitAll(checkFlag)
-			}
-
-			if isModelFlagLikelyConsumedAnotherFlag {
-				return fmt.Errorf(
-					"error: The --model (-m) flag was given the value \"%s\", which appears to be another flag. "+
-						"Please ensure --model (-m) is followed by a model ID defined in your '%s' file. "+
-						"Example: mcphost -m your_model_id",
-					modelFlag, modelsConfigFile,
-				)
-			}
-			// If it starts with a hyphen but isn't a known flag, it might be a valid model ID.
-			// We can't definitively say it's wrong without checking against loadedModelsConfig.
-			// The createProvider function will ultimately validate if the ID exists.
-			log.Debugf(
-				"Warning: The value for the --model (-m) flag is \"%s\", which starts with a hyphen. "+
-					"This will be treated as a model ID.",
-				modelFlag,
-			)
+		// Agent name validation (e.g., ensuring it's not an empty string if required)
+		// can be done here if needed, but typically agent loading handles non-existence.
+		if agentNameFlag == "" {
+			// This case should ideally be prevented by Cobra's default value mechanism.
+			// If it can still occur, assign the default explicitly.
+			agentNameFlag = "default"
+			log.Warn("Agent name flag was empty, defaulting to 'default'. This might indicate an issue with flag parsing or default value setting.")
 		}
+		log.Debug("Using agent", "name", agentNameFlag)
 
-		if !serverMode {
-			if modelFlag == "" { // User did not specify a model
-				if loadedModelsConfig != nil && len(loadedModelsConfig.Providers) > 0 &&
-					len(loadedModelsConfig.Providers[0].Models) > 0 && loadedModelsConfig.Providers[0].Models[0].ID != "" {
-					defaultModelID := loadedModelsConfig.Providers[0].Models[0].ID
-					modelFlag = defaultModelID
-					log.Infof("No model specified via --model flag. Using the first model from '%s' as default: %s", modelsConfigFile, defaultModelID)
-				} else {
-					// No model specified, and no default could be determined
-					return fmt.Errorf("CLI mode requires a model. Please specify one with --model <model_id>, or ensure '%s' contains at least one model definition to use as a default.", modelsConfigFile)
-				}
-			}
-			// At this point, modelFlag should be set, either by user or by default.
-			// The createProvider function will later validate if this modelFlag (whether user-provided or default) actually exists.
-		}
 
 		if serverMode {
 			return runServerMode(context.Background(), loadedModelsConfig)
 		}
+		// For CLI mode, agentNameFlag will be used within runMCPHost.
 		return runMCPHost(context.Background(), loadedModelsConfig)
 	},
 }
@@ -194,8 +157,8 @@ func init() {
 	rootCmd.PersistentFlags().
 		IntVar(&messageWindow, "message-window", 10, "number of messages to keep in context")
 	rootCmd.PersistentFlags().
-		StringVarP(&modelFlag, "model", "m", "",
-			"model ID to use (defined in models.yaml). If not specified, the first model in models.yaml will be used as default.")
+		StringVarP(&agentNameFlag, "agent", "a", "default",
+			"name of the agent to use (e.g., 'default', 'research_agent'). Agents are located in the 'agents' directory.")
 	rootCmd.PersistentFlags().
 		StringVar(&modelsConfigFile, "models", "models.yaml", "path to the models.yaml configuration file")
 
@@ -216,10 +179,10 @@ func init() {
 // createProvider initializes an LLM provider based on the model ID and models configuration.
 func createProvider(ctx context.Context, modelID, systemPrompt string, config *ModelsConfig) (history.Provider, error) {
 	if modelID == "" {
-		return nil, fmt.Errorf("model ID cannot be empty")
+		return nil, fmt.Errorf("model ID cannot be empty for provider creation")
 	}
 	if config == nil {
-		return nil, fmt.Errorf("models configuration is not loaded")
+		return nil, fmt.Errorf("models configuration is not loaded for provider creation")
 	}
 
 	for _, providerCfg := range config.Providers {
@@ -242,27 +205,21 @@ func createProvider(ctx context.Context, modelID, systemPrompt string, config *M
 				switch strings.ToLower(providerCfg.Name) {
 				case "anthropic":
 					if apiKey == "" {
-						// Try environment variable as a fallback if not in models.yaml, though models.yaml should be the primary source.
-						// For strictness, one might remove this env var check and require it in models.yaml.
-						// apiKey = os.Getenv("ANTHROPIC_API_KEY") // Decided against env var fallback to keep models.yaml as SoT.
-						return nil, fmt.Errorf("Anthropic API key not found in models.yaml for provider '%s', model ID '%s'", providerCfg.Name, modelID)
+						return nil, fmt.Errorf("Anthropic API key not found in models.yaml for provider '%s' (model ID '%s')", providerCfg.Name, modelID)
 					}
 					return anthropic.NewProvider(apiKey, baseURL, modelCfg.Name, systemPrompt), nil
 				case "ollama":
-					// Ollama uses baseURL. API key is typically not required or handled differently.
-					// The system prompt for Ollama is typically set within the Modelfile or via API parameters during generation,
-					// not usually at provider initialization. If needed, it would be passed to CreateMessage.
 					return ollama.NewProvider(baseURL, modelCfg.Name)
 				case "openai":
 					if apiKey == "" {
-						return nil, fmt.Errorf("OpenAI API key not found in models.yaml for provider '%s', model ID '%s'", providerCfg.Name, modelID)
+						return nil, fmt.Errorf("OpenAI API key not found in models.yaml for provider '%s' (model ID '%s')", providerCfg.Name, modelID)
 					}
 					return openai.NewProvider(apiKey, baseURL, modelCfg.Name, systemPrompt), nil
 				case "google":
 					if apiKey == "" {
-						return nil, fmt.Errorf("Google API key not found in models.yaml for provider '%s', model ID '%s'", providerCfg.Name, modelID)
+						return nil, fmt.Errorf("Google API key not found in models.yaml for provider '%s' (model ID '%s')", providerCfg.Name, modelID)
 					}
-					return google.NewProvider(ctx, apiKey, modelCfg.Name, systemPrompt) // Google provider might not use baseURL in the same way.
+					return google.NewProvider(ctx, apiKey, modelCfg.Name, systemPrompt)
 				default:
 					return nil, fmt.Errorf("unsupported provider type '%s' found in models.yaml for model ID '%s'", providerCfg.Name, modelID)
 				}
@@ -270,7 +227,53 @@ func createProvider(ctx context.Context, modelID, systemPrompt string, config *M
 		}
 	}
 
-	return nil, fmt.Errorf("model ID '%s' not found in models configuration file '%s'", modelID, modelsConfigFile)
+	return nil, fmt.Errorf("model with ID '%s' not found in the loaded models configuration ('%s') during provider creation", modelID, modelsConfigFile)
+}
+
+// selectModelForTask selects the best model ID for a given task based on preferences.
+func selectModelForTask(task string, modelsCfg *ModelsConfig) (string, error) {
+	if modelsCfg == nil {
+		return "", fmt.Errorf("models configuration is not loaded, cannot select model for task '%s'", task)
+	}
+	if task == "" {
+		log.Warn("Task for model selection is empty, this may lead to suboptimal model choice or failure.")
+		// Depending on desired behavior, could default to a generic task or return error.
+		// For now, proceed, and if no model has a preference for an empty task, it will fail.
+	}
+
+	bestScore := -1 // Use -1 to ensure any actual score (even 0) is better if it's the only one
+	var bestModelID string
+	foundModelWithPreference := false
+
+	for _, providerCfg := range modelsCfg.Providers {
+		for _, modelCfg := range providerCfg.Models {
+			score, ok := modelCfg.PreferencesPerTask[task]
+			if ok { // Only consider models that explicitly list the task
+				log.Debug("Considering model for task", "task", task, "modelID", modelCfg.ID, "provider", providerCfg.Name, "score", score)
+				if score > bestScore {
+					bestScore = score
+					bestModelID = modelCfg.ID
+					foundModelWithPreference = true
+				}
+			}
+		}
+	}
+
+	if !foundModelWithPreference {
+		// If no model has a preference for this specific task, try to find a default or first available model.
+		// This part can be adjusted based on desired fallback behavior.
+		// For now, let's try to pick the first model overall if no specific preference is found.
+		log.Warnf("No model found with a specific preference for task '%s'. Attempting to select a default model.", task)
+		if len(modelsCfg.Providers) > 0 && len(modelsCfg.Providers[0].Models) > 0 {
+			bestModelID = modelsCfg.Providers[0].Models[0].ID
+			log.Infof("Selected first available model as default: %s", bestModelID)
+			return bestModelID, nil
+		}
+		return "", fmt.Errorf("no model found with preferences for task '%s', and no default model could be selected from '%s'", task, modelsConfigFile)
+	}
+
+	log.Info("Selected model for task", "task", task, "modelID", bestModelID, "score", bestScore)
+	return bestModelID, nil
 }
 
 func pruneMessages(messages []history.HistoryMessage) []history.HistoryMessage {
@@ -733,25 +736,35 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	// For now, keep it in context for broader compatibility during refactoring.
 	ctx = context.WithValue(ctx, PromptRuntimeTweaksKey, cliTweaker)
 
-	// System prompt will be fetched from the default agent or set by other means.
-	// For now, initialize as empty for CLI mode. Server mode handles it via request.
-
-	ag, err := GetDefaultAgent()
+	// Load the agent specified by agentNameFlag
+	agent, err := LoadAgentByName(agentNameFlag) // Assuming LoadAgentByName resolves "default" etc.
 	if err != nil {
-		return fmt.Errorf("error getting default system prompt: %v", err)
+		return fmt.Errorf("error loading agent '%s': %w", agentNameFlag, err)
+	}
+	log.Info("Loaded agent for CLI mode", "agent", agent.Filename())
+
+	systemPrompt := agent.GetSystemPrompt()
+	taskForModelSelection := agent.GetTaskForModelSelection()
+	log.Info("Agent details for CLI mode", "systemPromptProvided", systemPrompt != "", "taskForModelSelection", taskForModelSelection)
+
+	// Select model based on task
+	selectedModelID, err := selectModelForTask(taskForModelSelection, modelsCfg)
+	if err != nil {
+		return fmt.Errorf("error selecting model for task '%s' (agent '%s'): %w", taskForModelSelection, agentNameFlag, err)
 	}
 
-	systemPrompt := ag.GetSystemPrompt()
-
-	// Create the provider using the model ID from modelFlag and the loaded modelsCfg
-	provider, err := createProvider(ctx, modelFlag, systemPrompt, modelsCfg)
+	// Create the provider using the selected model ID
+	provider, err := createProvider(ctx, selectedModelID, systemPrompt, modelsCfg)
 	if err != nil {
-		return fmt.Errorf("error creating provider for model ID '%s': %v", modelFlag, err)
+		// Error from createProvider already includes modelID.
+		return fmt.Errorf("error creating provider (agent '%s', task '%s'): %w", agentNameFlag, taskForModelSelection, err)
 	}
 
 	log.Info("Provider and model loaded for CLI mode",
-		"providerType", provider.Name(), // This will be like "anthropic", "openai"
-		"modelID", modelFlag) // This is the ID used for lookup
+		"providerType", provider.Name(),
+		"selectedModelID", selectedModelID,
+		"agent", agentNameFlag,
+		"task", taskForModelSelection)
 
 	mcpConfig, err := loadMCPConfig()
 	if err != nil {
@@ -856,6 +869,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 			mcpClients,
 			messages,
 			modelsCfg, // Pass loadedModelsConfig here
+			agentNameFlag, // Pass current agent name for context if needed by commands
 		)
 		if err != nil {
 			return err
@@ -911,7 +925,7 @@ func GenerateToolsFromMCPClients(ctx context.Context, mcpClients map[string]mcpc
 
 // StartJobRequest defines the expected JSON structure for the /start endpoint.
 type StartJobRequest struct {
-	ModelID       string `json:"model_id"` // Changed from "model" to "model_id" for clarity
+	AgentName     string `json:"agent_name,omitempty"` // If empty, "default" agent is used.
 	SystemMessage string `json:"system_message,omitempty"`
 	UserQuery     string `json:"user_query"`
 }
@@ -1057,22 +1071,45 @@ func handleStartJob(
 	}
 	defer r.Body.Close()
 
-	// Validate required fields
-	modelIDToUse := req.ModelID
-	if modelIDToUse == "" {
-		// ModelID is optional, try to use the default from modelsCfg
-		if modelsCfg != nil && len(modelsCfg.Providers) > 0 &&
-			len(modelsCfg.Providers[0].Models) > 0 && modelsCfg.Providers[0].Models[0].ID != "" {
-			defaultModelID := modelsCfg.Providers[0].Models[0].ID
-			modelIDToUse = defaultModelID
-			log.Info("No 'model_id' provided in /start request. Using default model.", "default_model_id", defaultModelID)
-		} else {
-			jobMutex.Unlock()
-			log.Error("Missing 'model_id' in /start request and no default model available in models.yaml")
-			http.Error(w, "Missing 'model_id' in request and no default model configured on server.", http.StatusBadRequest)
-			return
-		}
+	// Determine agent to use
+	agentNameToUse := req.AgentName
+	if agentNameToUse == "" {
+		agentNameToUse = "default"
+		log.Info("No 'agent_name' provided in /start request. Using 'default' agent.")
 	}
+
+	// Load agent
+	agent, err := LoadAgentByName(agentNameToUse)
+	if err != nil {
+		jobMutex.Unlock()
+		log.Error("Failed to load agent for /start request", "agent_name", agentNameToUse, "error", err)
+		http.Error(w, fmt.Sprintf("Failed to load agent '%s': %s", agentNameToUse, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	log.Info("Loaded agent for job", "agent_name", agentNameToUse, "agent_filename", agent.Filename())
+
+	// Determine system prompt: use request's if provided, else agent's default
+	systemPromptToUse := req.SystemMessage
+	if systemPromptToUse == "" {
+		systemPromptToUse = agent.GetSystemPrompt()
+		log.Info("Using system prompt from agent", "agent_name", agentNameToUse)
+	} else {
+		log.Info("Using system prompt from request payload", "agent_name", agentNameToUse)
+	}
+
+	// Get task from agent and select model
+	taskForModelSelection := agent.GetTaskForModelSelection()
+	log.Info("Agent details for job", "taskForModelSelection", taskForModelSelection)
+
+	modelIDToUse, err := selectModelForTask(taskForModelSelection, modelsCfg)
+	if err != nil {
+		jobMutex.Unlock()
+		log.Error("Failed to select model for task via agent", "agent_name", agentNameToUse, "task", taskForModelSelection, "error", err)
+		http.Error(w, fmt.Sprintf("Failed to select model for task '%s' (agent '%s'): %s", taskForModelSelection, agentNameToUse, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	log.Info("Selected model for job via agent", "agent_name", agentNameToUse, "task", taskForModelSelection, "model_id", modelIDToUse)
+
 
 	if req.UserQuery == "" {
 		jobMutex.Unlock()
@@ -1119,12 +1156,12 @@ func handleStartJob(
 
 	jobMutex.Unlock() // Unlock before starting goroutine to avoid holding lock for too long
 
-	log.Info("Starting job", "job_id", jobID, "model_id", modelIDToUse, "trace_file", traceFilePath)
-	// Pass model_id, system_message, mcpClients, allTools, and modelsCfg from the request/server to processJob
-	go processJob(jobCtx, jobID, modelIDToUse, req.SystemMessage, messagesForHistory, jobTweaker, mcpClients, allTools, modelsCfg)
+	log.Info("Starting job", "job_id", jobID, "agent_name", agentNameToUse, "selected_model_id", modelIDToUse, "trace_file", traceFilePath)
+	// Pass selected model_id, determined system_message, mcpClients, allTools, and modelsCfg to processJob
+	go processJob(jobCtx, jobID, modelIDToUse, systemPromptToUse, messagesForHistory, jobTweaker, mcpClients, allTools, modelsCfg)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "started", "job_id": jobID})
+	json.NewEncoder(w).Encode(map[string]string{"status": "started", "job_id": jobID, "agent_used": agentNameToUse, "model_selected": modelIDToUse})
 }
 
 func handleListModels(w http.ResponseWriter, r *http.Request, modelsCfg *ModelsConfig) {
