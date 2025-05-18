@@ -1,6 +1,8 @@
 package history
 
-import "context"
+import (
+	"context"
+)
 
 // Message represents a message in the conversation
 type Message interface {

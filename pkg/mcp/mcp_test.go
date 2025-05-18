@@ -4,7 +4,9 @@ import (
 	"context"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/sannysanoff/mcphost/pkg/history"
+	"github.com/sannysanoff/mcphost/pkg/system"
 	"github.com/sannysanoff/mcphost/pkg/testing_stuff"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -13,21 +15,28 @@ import (
 
 func TestMainEntryPoint(t *testing.T) {
 	mockProvider, mcpClients, allTools, msgs := MakeBratislavaMock(t)
-	err := runPrompt(currentJobCtx, mockProvider,
-		mcpClients,
-		allTools, "what_time_in_bratislava", &msgs, nil, false)
+	agent, err := LoadAgentByName("default")
+	require.NotNil(t, err)
+	err = runPrompt(currentJobCtx, mockProvider, agent, mcpClients, allTools, history.NewUserMessage("what_time_in_bratislava"), &msgs, nil, false)
 	require.Nil(t, err)
 }
 
 func TestDistrustfulResearcher(t *testing.T) {
 	mockProvider, mcpClients, allTools, msgs := MakeBratislavaMock(t)
-	err := runPrompt(currentJobCtx, mockProvider,
-		mcpClients,
-		allTools, "what_time_in_bratislava", &msgs, nil, false)
+	mockProvider.OtherResponses = func(q string) string {
+		if strings.Contains(q, "<research_goal>") && strings.Contains(q, "response_from:") {
+			return "ok_i_was_wrong"
+		}
+		return ""
+	}
+	agent, err := LoadAgentByName("distrustful_researcher")
+	require.Nil(t, err)
+	err = runPrompt(currentJobCtx, mockProvider, agent, mcpClients, allTools, history.NewUserMessage("what_time_in_bratislava"), &msgs, nil, false)
 	require.Nil(t, err)
 }
 
 func MakeBratislavaMock(t *testing.T) (*testing_stuff.MockProvider, map[string]mcpclient.MCPClient, []history.Tool, []history.HistoryMessage) {
+	system.PerformLLMCallHook = testing_stuff.MockPerformLLMCall
 	mockProvider := MakeMockProvider()
 	require.NotNil(t, mockProvider)
 

@@ -111,8 +111,9 @@ func (m *MockMCPClient) Close() error {
 func (m *MockMCPClient) OnNotification(handler func(notification mcp.JSONRPCNotification)) {}
 
 type MockProvider struct {
-	TheName   string
-	Responses map[string]history.Message
+	TheName        string
+	Responses      map[string]history.Message
+	OtherResponses func(string) string
 }
 
 func (m *MockProvider) CreateMessage(ctx context.Context, prompt string, messages []history.Message, tools []history.Tool) (history.Message, error) {
@@ -137,9 +138,14 @@ func (m *MockProvider) CreateMessage(ctx context.Context, prompt string, message
 	message, found := m.Responses[prompt]
 	if found {
 		return message, nil
-	} else {
-		return nil, fmt.Errorf("prompt not found")
 	}
+	if m.OtherResponses != nil {
+		messageS := m.OtherResponses(prompt)
+		if messageS != "" {
+			return history.NewAssistantResponse(messageS), nil
+		}
+	}
+	return nil, fmt.Errorf("prompt not found")
 }
 
 func (m *MockProvider) CreateToolResponse(toolCallID string, content interface{}) (history.Message, error) {
@@ -214,4 +220,8 @@ func MakeMockWebFetch() mcp.Tool {
 			Required: []string{"url"},
 		},
 	}
+}
+
+func MockPerformLLMCall(agent string, prompt string) (string, error) {
+	return "response_from:" + prompt, nil
 }

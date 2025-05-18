@@ -125,10 +125,6 @@ func (a *yaegiAgent) GetTaskForModelSelection() string {
 
 // NormalizeHistory calls the NormalizeHistory method on the agent.
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
-	if messages == nil { // Allow empty slice to be processed if an agent wants to inject initial messages
-		// return messages // Original behavior: return if nil or empty
-	}
-
 	normalizeFuncNameRaw, err := a.prepareAgentCall("NormalizeHistory", "NormalizeHistory")
 	if err != nil {
 		// Error already logged by prepareAgentCall
@@ -163,7 +159,7 @@ func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []histo
 	// Need to use a goroutine to protect against panics in Yaegi, and recover.
 	var results []reflect.Value
 	var callErr error
-	
+
 	// Setup a channel to signal completion or panic
 	done := make(chan struct{})
 
@@ -182,12 +178,11 @@ func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []histo
 	// For now, let's wait indefinitely, but a timeout could be added.
 	<-done
 
-
 	if callErr != nil {
 		// Error already logged by the deferred panic recovery
 		return messages
 	}
-	
+
 	// Process results
 	if len(results) != 1 {
 		log.Warn("NormalizeHistory function in agent did not return exactly one value, using original messages.", "agent", a.filename, "func", targetFuncNameInScript, "num_results", len(results))
@@ -204,17 +199,16 @@ func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []histo
 	// This is a more robust check than val.Interface().([]history.HistoryMessage)
 	// as it handles cases where the underlying types might be compatible but not identical.
 	// However, Yaegi usually returns the exact type or an interface.
-	
+
 	// We expect the agent to return []history.HistoryMessage
 	expectedType := reflect.TypeOf(([]history.HistoryMessage)(nil))
 	if !resultVal.Type().AssignableTo(expectedType) {
 		log.Warn("NormalizeHistory function returned an incompatible type.", "agent", a.filename, "func", targetFuncNameInScript, "expected_type", expectedType, "actual_type", resultVal.Type())
 		return messages
 	}
-	
+
 	if resultVal.CanInterface() {
 		if processedMessages, ok := resultVal.Interface().([]history.HistoryMessage); ok {
-			log.Debug("Successfully normalized history using agent.", "agent", a.filename, "func", targetFuncNameInScript)
 			return processedMessages
 		}
 		log.Warn("NormalizeHistory function in agent returned a value that could not be asserted to []history.HistoryMessage, using original messages.", "agent", a.filename, "func", targetFuncNameInScript, "return_type", resultVal.Type())

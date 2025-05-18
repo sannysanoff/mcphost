@@ -115,7 +115,7 @@ func (p *Provider) CreateMessage(
 		}
 
 		// Add tool calls for assistant messages
-		if msg.GetRole() == "assistant" {
+		if history.IsModelAnswer2(msg) {
 			for _, call := range msg.GetToolCalls() {
 				if call.GetName() != "" {
 					args := call.GetArguments()

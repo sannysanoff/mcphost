@@ -17,12 +17,12 @@ HISTORY_SRC := $(shell find pkg/history -type f -name '*.go')
 # Generate yaegi symbols only when sources change
 github_com-sannysanoff-mcphost-pkg-system.go: $(SYSTEM_SRC)
 	@echo "--- Generating system symbols ---"
-	@yaegi github.com/sannysanoff/mcphost/pkg/system
+	@yaegi extract github.com/sannysanoff/mcphost/pkg/system
 	@touch $@
 
 github_com-sannysanoff-mcphost-pkg-history.go: $(HISTORY_SRC)
 	@echo "--- Generating history symbols ---"
-	@yaegi github.com/sannysanoff/mcphost/pkg/history
+	@yaegi extract github.com/sannysanoff/mcphost/pkg/history
 	@touch $@
 
 generate: $(GENERATED)

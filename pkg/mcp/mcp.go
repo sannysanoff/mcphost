@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/sannysanoff/mcphost/pkg/history"
+	"github.com/sannysanoff/mcphost/pkg/system"
 	"os"
 	"path/filepath"
 	"time"
@@ -38,29 +39,29 @@ var (
 	tokyoBg     = lipgloss.Color("234") // #1a1b26
 
 	promptStyle = lipgloss.NewStyle().
-			Foreground(tokyoBlue).
-			PaddingLeft(2)
+		Foreground(tokyoBlue).
+		PaddingLeft(2)
 
 	responseStyle = lipgloss.NewStyle().
-			Foreground(tokyoFg).
-			PaddingLeft(2)
+		Foreground(tokyoFg).
+		PaddingLeft(2)
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(tokyoRed).
-			Bold(true)
+		Foreground(tokyoRed).
+		Bold(true)
 
 	toolNameStyle = lipgloss.NewStyle().
-			Foreground(tokyoCyan).
-			Bold(true)
+		Foreground(tokyoCyan).
+		Bold(true)
 
 	descriptionStyle = lipgloss.NewStyle().
-				Foreground(tokyoFg).
-				PaddingBottom(1)
+		Foreground(tokyoFg).
+		PaddingBottom(1)
 
 	contentStyle = lipgloss.NewStyle().
-			Background(tokyoBg).
-			PaddingLeft(4).
-			PaddingRight(4)
+		Background(tokyoBg).
+		PaddingLeft(4).
+		PaddingRight(4)
 )
 
 type MCPConfig struct {
@@ -615,7 +616,7 @@ func displayMessageHistory(messages []history.HistoryMessage) {
 
 	for _, msg := range messages {
 		roleTitle := "## User"
-		if msg.Role == "assistant" {
+		if system.IsModelAnswerAny(msg) {
 			roleTitle = "## Assistant"
 		} else if msg.Role == "system" {
 			roleTitle = "## System"

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/sannysanoff/mcphost/pkg/history"
+	"github.com/sannysanoff/mcphost/pkg/system"
 	"github.com/sannysanoff/mcphost/pkg/testing_stuff"
 	"io"        // Added for io.ReadAll
 	"math/rand" // Added for random number generation
@@ -131,6 +132,8 @@ Server Mode:
 		}
 		log.Debug("Using agent", "name", agentNameFlag)
 
+		// cyclic ref
+		system.PerformLLMCallHook = RunSubAgent
 
 		if serverMode {
 			return runServerMode(context.Background(), loadedModelsConfig)
@@ -314,8 +317,8 @@ func pruneMessages(messages []history.HistoryMessage) []history.HistoryMessage {
 			}
 		}
 		// Only include messages that have content or are not assistant messages
-		if (len(prunedBlocks) > 0 && msg.Role == "assistant") ||
-			msg.Role != "assistant" {
+		if (len(prunedBlocks) > 0 && system.IsModelAnswerAny(msg)) ||
+			!system.IsModelAnswerAny(msg) {
 			hasTextBlock := false
 			for _, block := range msg.Content {
 				if block.Type == "text" {
@@ -355,19 +358,10 @@ func updateRenderer() error {
 }
 
 // Method implementations for simpleMessage
-func runPrompt(
-	ctx context.Context,
-	provider history.Provider,
-	mcpClients map[string]mcpclient.MCPClient,
-	tools []history.Tool,
-	prompt string,
-	messages *[]history.HistoryMessage,
-	tweaker PromptRuntimeTweaks, // Added tweaker parameter
-	isInteractive bool, // Added isInteractive flag
-) error {
+func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, prompt *history.HistoryMessage, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) error {
 	// Display the user's prompt if it's not empty and in interactive mode
-	if prompt != "" && isInteractive {
-		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt))
+	if prompt != nil && isInteractive {
+		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt.GetContent()))
 	}
 	var message history.Message
 	var err error
@@ -398,9 +392,13 @@ func runPrompt(
 
 	for {
 		action := func() {
+			reqPrompt := ""
+			if prompt != nil {
+				reqPrompt = prompt.GetContent()
+			}
 			message, err = provider.CreateMessage(
 				ctx,
-				prompt,      // Pass the current prompt string
+				reqPrompt,   // Pass the current prompt string
 				llmMessages, // Pass the history *before* this prompt
 				effectiveTools,
 			)
@@ -441,23 +439,21 @@ func runPrompt(
 
 	// If a prompt was provided by the user (i.e., prompt string is not empty),
 	// add it to the history now. This is done after the LLM call succeeds.
-	if prompt != "" && tweaker != nil {
-		userMessage := history.HistoryMessage{
-			Role: "user",
-			Content: []history.ContentBlock{{
-				Type: "text",
-				Text: prompt,
-			}},
-		}
+	if prompt != nil {
+		userMessage := prompt
 		// *messages here is the history *before* this userMessage.
 		// tweaker.AssignIDsToNewMessage will correctly link it.
-		tweaker.AssignIDsToNewMessage(&userMessage, *messages)
-		*messages = append(*messages, userMessage) // Add user's current prompt to the main history slice
+		if tweaker != nil {
+			tweaker.AssignIDsToNewMessage(userMessage, *messages)
+		}
+		*messages = append(*messages, *userMessage) // Add user's current prompt to the main history slice
 
-		// Record state *after* adding the user message
-		if err := tweaker.RecordState(*messages, "user_prompt_sent"); err != nil {
-			log.Error("Failed to record trace after user prompt was sent", "error", err)
-			// Continue execution even if tracing fails
+		if tweaker != nil {
+			// Record state *after* adding the user message
+			if err := tweaker.RecordState(*messages, "user_prompt_sent"); err != nil {
+				log.Error("Failed to record trace after user prompt was sent", "error", err)
+				// Continue execution even if tracing fails
+			}
 		}
 	}
 
@@ -692,7 +688,14 @@ func runPrompt(
 		}
 		// Make another call to the LLM with the tool results
 		// Pass the tweaker and isInteractive flags down
-		return runPrompt(ctx, provider, mcpClients, tools, "", messages, tweaker, isInteractive) // Pass empty prompt
+		return runPrompt(ctx, provider, agent, mcpClients, tools, nil, messages, tweaker, isInteractive) // Pass empty prompt
+	}
+
+	*messages = agent.NormalizeHistory(*messages)
+	lastMessage := (*messages)[len(*messages)-1]
+	if system.IsUserMessage(lastMessage) {
+		*messages = (*messages)[:len(*messages)-1]                                                                // cut last message
+		return runPrompt(ctx, provider, agent, mcpClients, tools, &lastMessage, messages, tweaker, isInteractive) // Pass empty prompt
 	}
 
 	if isInteractive {
@@ -717,8 +720,31 @@ func generateTraceID() string {
 	return fmt.Sprintf("%s-%s", timestamp, randomSuffix)
 }
 
+var McpClients map[string]mcpclient.MCPClient
+var AllTools []history.Tool
+
 // runMCPHost uses the loaded models configuration.
 func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
+
+	mcpConfig, err := loadMCPConfig()
+	if McpClients == nil {
+
+		if err != nil {
+			return fmt.Errorf("error loading MCP config: %v", err)
+		}
+
+		McpClients, err = createMCPClients(mcpConfig)
+		if err != nil {
+			return fmt.Errorf("error creating MCP clients: %v", err)
+		}
+
+		for name := range McpClients {
+			log.Info("Server connected", "name", name)
+		}
+
+		AllTools = GenerateToolsFromMCPClients(ctx, McpClients, AllTools)
+
+	}
 	// Model flag validation (presence and default) is now handled in rootCmd.RunE
 
 	// Generate trace file path for CLI mode
@@ -726,14 +752,6 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	traceFileName := fmt.Sprintf("%s.yaml", traceID)
 	fullTracePath := filepath.Join(tracesDir, traceFileName)
 	log.Info("Trace file will be saved to", "path", fullTracePath)
-
-	// Initialize PromptRuntimeTweaks with the trace path for CLI mode
-	cliTweaker := NewDefaultPromptRuntimeTweaks(fullTracePath)
-	// The tweaker is now passed as a direct argument to runPrompt,
-	// so setting it in context here is not strictly necessary for runPrompt itself,
-	// but other functions might still expect it if not refactored.
-	// For now, keep it in context for broader compatibility during refactoring.
-	ctx = context.WithValue(ctx, PromptRuntimeTweaksKey, cliTweaker)
 
 	// Load the agent specified by agentNameFlag
 	agent, err := LoadAgentByName(agentNameFlag) // Assuming LoadAgentByName resolves "default" etc.
@@ -745,6 +763,19 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	systemPrompt := agent.GetSystemPrompt()
 	taskForModelSelection := agent.GetTaskForModelSelection()
 	log.Info("Agent details for CLI mode", "systemPromptProvided", systemPrompt != "", "taskForModelSelection", taskForModelSelection)
+
+	defer func() {
+		log.Info("Shutting down MCP servers...")
+		for name, client := range McpClients {
+			if err := client.Close(); err != nil {
+				log.Error("Failed to close server", "name", name, "error", err)
+			} else {
+				log.Info("Server closed", "name", name)
+			}
+		}
+	}()
+
+	messages := make([]history.HistoryMessage, 0)
 
 	// Select model based on task
 	selectedModelID, err := selectModelForTask(taskForModelSelection, modelsCfg)
@@ -765,35 +796,13 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		"agent", agentNameFlag,
 		"task", taskForModelSelection)
 
-	mcpConfig, err := loadMCPConfig()
-	if err != nil {
-		return fmt.Errorf("error loading MCP config: %v", err)
-	}
-
-	mcpClients, err := createMCPClients(mcpConfig)
-	if err != nil {
-		return fmt.Errorf("error creating MCP clients: %v", err)
-	}
-
-	defer func() {
-		log.Info("Shutting down MCP servers...")
-		for name, client := range mcpClients {
-			if err := client.Close(); err != nil {
-				log.Error("Failed to close server", "name", name, "error", err)
-			} else {
-				log.Info("Server closed", "name", name)
-			}
-		}
-	}()
-
-	for name := range mcpClients {
-		log.Info("Server connected", "name", name)
-	}
-
-	var allTools []history.Tool
-	allTools = GenerateToolsFromMCPClients(ctx, mcpClients, allTools)
-
-	messages := make([]history.HistoryMessage, 0)
+	// Initialize PromptRuntimeTweaks with the trace path for CLI mode
+	cliTweaker := NewDefaultPromptRuntimeTweaks(fullTracePath)
+	// The tweaker is now passed as a direct argument to runPrompt,
+	// so setting it in context here is not strictly necessary for runPrompt itself,
+	// but other functions might still expect it if not refactored.
+	// For now, keep it in context for broader compatibility during refactoring.
+	ctx = context.WithValue(ctx, PromptRuntimeTweaksKey, cliTweaker)
 
 	if userPromptCLI != "" {
 		// Non-interactive mode: process the single prompt and exit
@@ -801,7 +810,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 
 		// runPrompt with isInteractive=false will use logging for output.
 		// It modifies 'messages' in place.
-		err := runPrompt(ctx, provider, mcpClients, allTools, userPromptCLI, &messages, cliTweaker, false)
+		err := runPrompt(ctx, provider, agent, McpClients, AllTools, history.NewUserMessage(userPromptCLI), &messages, cliTweaker, false)
 		if err != nil {
 			// Error is already logged by runPrompt or its callees.
 			// Return the error to indicate failure to the main Execute function.
@@ -812,7 +821,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		// Search backwards for the last assistant message with text content.
 		var lastAssistantText string
 		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == "assistant" {
+			if system.IsModelAnswerAny(messages[i]) {
 				for _, contentBlock := range messages[i].Content {
 					if contentBlock.Type == "text" && contentBlock.Text != "" {
 						lastAssistantText = contentBlock.Text
@@ -865,9 +874,9 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		handled, err := handleSlashCommand(
 			prompt,
 			mcpConfig,
-			mcpClients,
+			McpClients,
 			messages,
-			modelsCfg, // Pass loadedModelsConfig here
+			modelsCfg,     // Pass loadedModelsConfig here
 			agentNameFlag, // Pass current agent name for context if needed by commands
 		)
 		if err != nil {
@@ -881,7 +890,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 			messages = pruneMessages(messages)
 		}
 		// Pass cliTweaker and true for isInteractive
-		err = runPrompt(ctx, provider, mcpClients, allTools, prompt, &messages, cliTweaker, true)
+		err = runPrompt(ctx, provider, agent, McpClients, AllTools, history.NewUserMessage(prompt), &messages, cliTweaker, true)
 		if err != nil {
 			log.Error("Error from runPrompt in interactive mode", "error", err)
 			fmt.Printf("\n%s\n", errorStyle.Render(fmt.Sprintf("Error: %v", err)))
@@ -1089,8 +1098,11 @@ func handleStartJob(
 
 	// Determine system prompt: use request's if provided, else agent's default
 	systemPromptToUse := req.SystemMessage
-	if systemPromptToUse == "" {
+	if systemPromptToUse == "" || systemPromptToUse[0] == '+' {
 		systemPromptToUse = agent.GetSystemPrompt()
+		if req.SystemMessage[0] == '+' {
+			systemPromptToUse += "\n" + req.SystemMessage[1:]
+		}
 		log.Info("Using system prompt from agent", "agent_name", agentNameToUse)
 	} else {
 		log.Info("Using system prompt from request payload", "agent_name", agentNameToUse)
@@ -1108,7 +1120,6 @@ func handleStartJob(
 		return
 	}
 	log.Info("Selected model for job via agent", "agent_name", agentNameToUse, "task", taskForModelSelection, "model_id", modelIDToUse)
-
 
 	if req.UserQuery == "" {
 		jobMutex.Unlock()
@@ -1157,7 +1168,7 @@ func handleStartJob(
 
 	log.Info("Starting job", "job_id", jobID, "agent_name", agentNameToUse, "selected_model_id", modelIDToUse, "trace_file", traceFilePath)
 	// Pass selected model_id, determined system_message, mcpClients, allTools, and modelsCfg to processJob
-	go processJob(jobCtx, jobID, modelIDToUse, systemPromptToUse, messagesForHistory, jobTweaker, mcpClients, allTools, modelsCfg)
+	go processJob(jobCtx, jobID, modelIDToUse, agent, systemPromptToUse, messagesForHistory, jobTweaker, mcpClients, allTools, modelsCfg)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "started", "job_id": jobID, "agent_used": agentNameToUse, "model_selected": modelIDToUse})
@@ -1247,17 +1258,7 @@ func handleStopJob(w http.ResponseWriter, r *http.Request) {
 
 // processJob is the goroutine that handles a single LLM interaction task.
 // It now accepts modelToUse and systemPromptToUse for job-specific configuration.
-func processJob(
-	jobCtx context.Context,
-	jobID string,
-	modelToUse string,
-	systemPromptToUse string,
-	messages []history.HistoryMessage,
-	tweaker PromptRuntimeTweaks,
-	mcpClients map[string]mcpclient.MCPClient,
-	allTools []history.Tool,
-	modelsCfg *ModelsConfig, // Changed from apiKeys
-) {
+func processJob(jobCtx context.Context, jobID string, modelToUse string, agent Agent, systemPromptToUse string, messages []history.HistoryMessage, tweaker PromptRuntimeTweaks, mcpClients map[string]mcpclient.MCPClient, allTools []history.Tool, modelsCfg *ModelsConfig) {
 	defer func() {
 		jobMutex.Lock()
 		if currentJobID == jobID { // Ensure this job is still the one to clear
@@ -1301,7 +1302,7 @@ func processJob(
 
 	// The `runPrompt` function will append new messages (assistant, tool_use, tool_result)
 	// to the `messages` slice passed by address.
-	err = runPrompt(jobCtx, provider, mcpClients, allTools, "", &messages, tweaker, false) // isInteractive is false
+	err = runPrompt(jobCtx, provider, agent, mcpClients, allTools, history.NewUserMessage(""), &messages, tweaker, false) // isInteractive is false
 
 	if err != nil {
 		log.Error("Job: Error during LLM interaction", "job_id", jobID, "error", err)
@@ -1365,4 +1366,57 @@ func ReadAll(r io.Reader) ([]byte, error) {
 
 func MakeMockProvider() *testing_stuff.MockProvider {
 	return &testing_stuff.MockProvider{TheName: "mock", Responses: map[string]history.Message{}}
+}
+
+func RunSubAgent(agentName string, prompt string) (string, error) {
+	// Load the agent specified by agentNameFlag
+	agent, err := LoadAgentByName(agentName) // Assuming LoadAgentByName resolves "default" etc.
+	if err != nil {
+		return "", fmt.Errorf("error loading agent '%s': %w", agentName, err)
+	}
+	taskForModelSelection := agent.GetTaskForModelSelection()
+
+	messages := make([]history.HistoryMessage, 0)
+
+	// Select model based on task
+	selectedModelID, err := selectModelForTask(taskForModelSelection, loadedModelsConfig)
+	if err != nil {
+		return "", fmt.Errorf("error selecting model for task '%s' (agent '%s'): %w", taskForModelSelection, agentName, err)
+	}
+
+	// Create the provider using the selected model ID
+	ctx := context.Background()
+	provider, err := createProvider(ctx, selectedModelID, agent.GetSystemPrompt(), loadedModelsConfig)
+	if err != nil {
+		// Error from createProvider already includes modelID.
+		return "", fmt.Errorf("error creating provider (agent '%s', task '%s'): %w", agentName, taskForModelSelection, err)
+	}
+
+	// runPrompt with isInteractive=false will use logging for output.
+	// It modifies 'messages' in place.
+	err = runPrompt(ctx, provider, agent, McpClients, AllTools, history.NewUserMessage(prompt), &messages, nil, false)
+	if err != nil {
+		// Error is already logged by runPrompt or its callees.
+		// Return the error to indicate failure to the main Execute function.
+		return "", fmt.Errorf("error processing non-interactive prompt: %w", err)
+	}
+
+	// Print the assistant's final textual response to stdout.
+	// Search backwards for the last assistant message with text content.
+	var lastAssistantText string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if system.IsModelAnswer(messages[i]) {
+			lastAssistantText = messages[i].GetContent()
+			if lastAssistantText != "" {
+				break
+			}
+		}
+	}
+
+	if lastAssistantText != "" {
+		return lastAssistantText, nil
+	} else {
+		return "", fmt.Errorf("No final text response from assistant to print for non-interactive mode.")
+	}
+
 }
