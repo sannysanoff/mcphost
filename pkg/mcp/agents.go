@@ -71,60 +71,42 @@ func (a *yaegiAgent) checkAndReload() error {
 	return nil
 }
 
-func (a *yaegiAgent) GetSystemPrompt() string {
+// callStringMethod calls a method on the agent that is expected to return a string.
+// If the method doesn't exist, an error occurs, or it doesn't return a string, defaultValue is returned.
+func (a *yaegiAgent) callStringMethod(methodSuffix string, defaultValue string) string {
 	if err := a.checkAndReload(); err != nil {
-		log.Error("Failed to check/reload agent", "agent", a.filename, "error", err)
-		return ""
+		log.Error("Failed to check/reload agent", "agent", a.filename, "method_suffix", methodSuffix, "error", err)
+		return defaultValue
 	}
 
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
-	promptFuncName := makePascalCase(baseName) + "GetPrompt"
+	funcName := makePascalCase(baseName) + methodSuffix
 
-	evalStr := fmt.Sprintf("agents.%s()", promptFuncName)
+	evalStr := fmt.Sprintf("agents.%s()", funcName)
 	val, err := a.interpreter.Eval(evalStr)
+
 	if err != nil {
-		log.Error("Failed to call prompt function", "agent", a.filename, "func", promptFuncName, "error", err)
-		return ""
-	}
-
-	if val.Kind() == reflect.String {
-		return val.String()
-	}
-	return ""
-}
-
-func (a *yaegiAgent) GetTaskForModelSelection() string {
-	if err := a.checkAndReload(); err != nil {
-		log.Error("Failed to check/reload agent for task selection", "agent", a.filename, "error", err)
-		return "default"
-	}
-
-	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
-	taskFuncName := makePascalCase(baseName) + "GetTaskForModelSelection"
-
-	evalStr := fmt.Sprintf("agents.%s()", taskFuncName)
-	val, err := a.interpreter.Eval(evalStr)
-	if err != nil {
-		// Log if the error is not simply "symbol not found" which is an expected case.
-		// Yaegi's interp.Eval returns an error that includes "undefined" for missing symbols.
+		// Log if the error is not simply "symbol not found" which is an expected case for optional methods.
 		if !strings.Contains(err.Error(), "undefined") && !strings.Contains(err.Error(), "not found") {
-			log.Error("Failed to call task selection function", "agent", a.filename, "func", taskFuncName, "error", err)
+			log.Error("Failed to call agent function", "agent", a.filename, "func", funcName, "error", err)
 		} else {
-			log.Debug("Task selection function not found, using default", "agent", a.filename, "func", taskFuncName)
+			log.Debug("Agent function not found or call failed, using default", "agent", a.filename, "func", funcName, "error_detail", err.Error())
 		}
-		return "default"
+		return defaultValue
 	}
 
 	if val.Kind() == reflect.String {
 		return val.String()
 	}
-	log.Warn("Task selection function did not return a string, using default", "agent", a.filename, "func", taskFuncName, "return_type", val.Kind())
-	return "default"
+	log.Warn("Agent function did not return a string, using default", "agent", a.filename, "func", funcName, "return_type", val.Kind())
+	return defaultValue
 }
 
-func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+// callNormalizeHistoryMethod calls the NormalizeHistory method on the agent.
+// If the method doesn't exist, an error occurs, or it doesn't return []history.HistoryMessage, the original messages are returned.
+func (a *yaegiAgent) callNormalizeHistoryMethod(messages []history.HistoryMessage) []history.HistoryMessage {
 	if err := a.checkAndReload(); err != nil {
-		log.Error("Failed to check/reload agent", "agent", a.filename, "error", err)
+		log.Error("Failed to check/reload agent for NormalizeHistory", "agent", a.filename, "error", err)
 		return messages
 	}
 
@@ -133,8 +115,13 @@ func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []histo
 
 	evalStr := fmt.Sprintf("agents.%s(%#v)", normalizeFuncName, messages)
 	val, err := a.interpreter.Eval(evalStr)
+
 	if err != nil {
-		log.Error("Failed to call normalize function", "agent", a.filename, "func", normalizeFuncName, "error", err)
+		if !strings.Contains(err.Error(), "undefined") && !strings.Contains(err.Error(), "not found") {
+			log.Error("Failed to call NormalizeHistory function", "agent", a.filename, "func", normalizeFuncName, "error", err)
+		} else {
+			log.Debug("NormalizeHistory function not found or call failed, returning original messages", "agent", a.filename, "func", normalizeFuncName, "error_detail", err.Error())
+		}
 		return messages
 	}
 
@@ -142,8 +129,23 @@ func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []histo
 		if result, ok := val.Interface().([]history.HistoryMessage); ok {
 			return result
 		}
+		log.Warn("NormalizeHistory function did not return []history.HistoryMessage", "agent", a.filename, "func", normalizeFuncName, "return_type", val.Type())
+	} else {
+		log.Warn("NormalizeHistory function returned invalid or uninterfaceable value", "agent", a.filename, "func", normalizeFuncName)
 	}
 	return messages
+}
+
+func (a *yaegiAgent) GetSystemPrompt() string {
+	return a.callStringMethod("GetPrompt", "")
+}
+
+func (a *yaegiAgent) GetTaskForModelSelection() string {
+	return a.callStringMethod("GetTaskForModelSelection", "default")
+}
+
+func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+	return a.callNormalizeHistoryMethod(messages)
 }
 
 func (a *yaegiAgent) Filename() string {
