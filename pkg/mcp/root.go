@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
+	"github.com/sannysanoff/mcphost/pkg/testing_stuff"
 	"io"        // Added for io.ReadAll
 	"math/rand" // Added for random number generation
 	"os"
@@ -21,12 +23,10 @@ import (
 	"github.com/charmbracelet/glamour"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcphost/pkg/history"
-	"github.com/mark3labs/mcphost/pkg/llm"
-	"github.com/mark3labs/mcphost/pkg/llm/anthropic"
-	"github.com/mark3labs/mcphost/pkg/llm/google"
-	"github.com/mark3labs/mcphost/pkg/llm/ollama"
-	"github.com/mark3labs/mcphost/pkg/llm/openai"
+	"github.com/sannysanoff/mcphost/pkg/llm/anthropic"
+	"github.com/sannysanoff/mcphost/pkg/llm/google"
+	"github.com/sannysanoff/mcphost/pkg/llm/ollama"
+	"github.com/sannysanoff/mcphost/pkg/llm/openai"
 	"github.com/spf13/cobra"
 
 	"golang.org/x/term"
@@ -214,7 +214,7 @@ func init() {
 }
 
 // createProvider initializes an LLM provider based on the model ID and models configuration.
-func createProvider(ctx context.Context, modelID, systemPrompt string, config *ModelsConfig) (llm.Provider, error) {
+func createProvider(ctx context.Context, modelID, systemPrompt string, config *ModelsConfig) (history.Provider, error) {
 	if modelID == "" {
 		return nil, fmt.Errorf("model ID cannot be empty")
 	}
@@ -355,9 +355,9 @@ func updateRenderer() error {
 // Method implementations for simpleMessage
 func runPrompt(
 	ctx context.Context,
-	provider llm.Provider,
+	provider history.Provider,
 	mcpClients map[string]mcpclient.MCPClient,
-	tools []llm.Tool,
+	tools []history.Tool,
 	prompt string,
 	messages *[]history.HistoryMessage,
 	tweaker PromptRuntimeTweaks, // Added tweaker parameter
@@ -367,21 +367,21 @@ func runPrompt(
 	if prompt != "" && isInteractive {
 		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt))
 	}
-	var message llm.Message
+	var message history.Message
 	var err error
 	backoff := initialBackoff
 	retries := 0
 
 	// Convert MessageParam to llm.Message for provider.
 	// These llmMessages represent the history *before* the current `prompt` string.
-	llmMessages := make([]llm.Message, len(*messages))
+	llmMessages := make([]history.Message, len(*messages))
 	for i := range *messages {
 		llmMessages[i] = &(*messages)[i]
 	}
 
 	log.Debug("Using provided PromptRuntimeTweaks for tool filtering and tracing")
 
-	var effectiveTools []llm.Tool
+	var effectiveTools []history.Tool
 	if tweaker != nil { // tweaker might be nil if tracing is disabled (though NewDefaultPromptRuntimeTweaks("") handles it)
 		for _, tool := range tools {
 			// Ensure to use GetName() method from the llm.Tool interface
@@ -439,7 +439,7 @@ func runPrompt(
 
 	// If a prompt was provided by the user (i.e., prompt string is not empty),
 	// add it to the history now. This is done after the LLM call succeeds.
-	if prompt != "" {
+	if prompt != "" && tweaker != nil {
 		userMessage := history.HistoryMessage{
 			Role: "user",
 			Content: []history.ContentBlock{{
@@ -736,10 +736,12 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	// System prompt will be fetched from the default agent or set by other means.
 	// For now, initialize as empty for CLI mode. Server mode handles it via request.
 
-	systemPrompt, err := GetDefaultAgentSystemPrompt()
+	ag, err := GetDefaultAgent()
 	if err != nil {
-		return fmt.Errorf("error getting default system prompt: %v", modelFlag, err)
+		return fmt.Errorf("error getting default system prompt: %v", err)
 	}
+
+	systemPrompt := ag.GetSystemPrompt()
 
 	// Create the provider using the model ID from modelFlag and the loaded modelsCfg
 	provider, err := createProvider(ctx, modelFlag, systemPrompt, modelsCfg)
@@ -776,33 +778,8 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		log.Info("Server connected", "name", name)
 	}
 
-	var allTools []llm.Tool
-	for serverName, mcpClient := range mcpClients {
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		toolsResult, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
-		cancel()
-
-		if err != nil {
-			log.Error(
-				"Error fetching tools",
-				"server",
-				serverName,
-				"error",
-				err,
-			)
-			continue
-		}
-
-		serverTools := mcpToolsToAnthropicTools(serverName, toolsResult.Tools)
-		allTools = append(allTools, serverTools...)
-		log.Info(
-			"Tools loaded",
-			"server",
-			serverName,
-			"count",
-			len(toolsResult.Tools),
-		)
-	}
+	var allTools []history.Tool
+	allTools = GenerateToolsFromMCPClients(ctx, mcpClients, allTools)
 
 	messages := make([]history.HistoryMessage, 0)
 
@@ -900,6 +877,36 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	}
 }
 
+func GenerateToolsFromMCPClients(ctx context.Context, mcpClients map[string]mcpclient.MCPClient, allTools []history.Tool) []history.Tool {
+	for serverName, mcpClient := range mcpClients {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		toolsResult, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+		cancel()
+
+		if err != nil {
+			log.Error(
+				"Error fetching tools",
+				"server",
+				serverName,
+				"error",
+				err,
+			)
+			continue
+		}
+
+		serverTools := mcpToolsToAnthropicTools(serverName, toolsResult.Tools)
+		allTools = append(allTools, serverTools...)
+		log.Info(
+			"Tools loaded",
+			"server",
+			serverName,
+			"count",
+			len(toolsResult.Tools),
+		)
+	}
+	return allTools
+}
+
 // --- Server Mode Implementation ---
 
 // StartJobRequest defines the expected JSON structure for the /start endpoint.
@@ -947,7 +954,7 @@ func runServerMode(ctx context.Context, modelsCfg *ModelsConfig) error {
 	}
 
 	// Pre-fetch all tools from all MCP clients.
-	var serverAllTools []llm.Tool
+	var serverAllTools []history.Tool
 	for serverName, mcpClient := range serverMcpClients {
 		// Use a background context with timeout for listing tools during server startup
 		listToolsCtx, listToolsCancel := context.WithTimeout(context.Background(), 30*time.Second) // Increased timeout for initial tool listing
@@ -1023,7 +1030,7 @@ func handleStartJob(
 	w http.ResponseWriter,
 	r *http.Request,
 	mcpClients map[string]mcpclient.MCPClient,
-	allTools []llm.Tool,
+	allTools []history.Tool,
 	modelsCfg *ModelsConfig, // Changed from apiKeys
 ) {
 	if r.Method != http.MethodPost {
@@ -1212,7 +1219,7 @@ func processJob(
 	messages []history.HistoryMessage,
 	tweaker PromptRuntimeTweaks,
 	mcpClients map[string]mcpclient.MCPClient,
-	allTools []llm.Tool,
+	allTools []history.Tool,
 	modelsCfg *ModelsConfig, // Changed from apiKeys
 ) {
 	defer func() {
@@ -1318,4 +1325,8 @@ func ReadAll(r io.Reader) ([]byte, error) {
 			return b, err
 		}
 	}
+}
+
+func MakeMockProvider() *testing_stuff.MockProvider {
+	return &testing_stuff.MockProvider{TheName: "mock", Responses: map[string]history.Message{}}
 }
