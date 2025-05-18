@@ -162,7 +162,25 @@ func TestMainEntryPoint(t *testing.T) {
 	msgs := []history.HistoryMessage{}
 	mockClient.mockHander = func(request mcp.CallToolRequest) *mcp.CallToolResult {
 		if request.Params.Name == "mock__web_search" && request.Params.Input["query"] == "bratislava_links" {
-			return &mcp.CallToolResult{}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Annotated: mcp.Annotated{},
+						Type:      "text",
+						Text:      "Here are 3 search results about Bratislava time:\n1. Current time in Bratislava is 15:30 CET\n2. Time zone info for Bratislava\n3. Time difference calculator",
+					},
+				},
+			}
+		} else if request.Params.Name == "mock__web_fetch" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					mcp.TextContent{
+						Annotated: mcp.Annotated{},
+						Type:      "text",
+						Text:      "Fetched content from URL: " + request.Params.Input["url"].(string),
+					},
+				},
+			}
 		}
 		return nil
 	}
