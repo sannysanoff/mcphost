@@ -29,15 +29,16 @@ type Agent interface {
 
 	// Filename returns the source file name of this agent
 	Filename() string
+
+	GetTaskForModelSelection() string
 }
 
 type yaegiAgent struct {
-	filename     string
-	fullPath     string
-	interpreter  *interp.Interpreter
-	lastCheck    int64
-	lastModTime  time.Time
-	cachedPrompt string
+	filename    string
+	fullPath    string
+	interpreter *interp.Interpreter
+	lastCheck   int64
+	lastModTime time.Time
 }
 
 func (a *yaegiAgent) checkAndReload() error {
@@ -64,7 +65,6 @@ func (a *yaegiAgent) checkAndReload() error {
 		}
 
 		a.lastModTime = info.ModTime()
-		a.cachedPrompt = "" // Invalidate cache
 	}
 
 	a.lastCheck = now
@@ -75,10 +75,6 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 	if err := a.checkAndReload(); err != nil {
 		log.Error("Failed to check/reload agent", "agent", a.filename, "error", err)
 		return ""
-	}
-
-	if a.cachedPrompt != "" {
-		return a.cachedPrompt
 	}
 
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
@@ -92,10 +88,13 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 	}
 
 	if val.Kind() == reflect.String {
-		a.cachedPrompt = val.String()
-		return a.cachedPrompt
+		return val.String()
 	}
 	return ""
+}
+
+func (a *yaegiAgent) GetTaskForModelSelection() string {
+	return "default"
 }
 
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
