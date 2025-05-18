@@ -147,3 +147,17 @@ func NewToolCallMessage(toolName string, args map[string]interface{}) *HistoryMe
 
 // Ensure ContentBlock implements yaml.Marshaler and yaml.Unmarshaler if custom logic for json.RawMessage or interface{} is needed.
 // For now, relying on struct tags and default behavior of yaml.v3.
+
+// IsModelAnswer checks if all content blocks in a message are of type "text".
+// It returns true if the message content is purely textual, false otherwise (e.g., tool calls, empty content).
+func IsModelAnswer(message HistoryMessage) bool {
+	if len(message.Content) == 0 {
+		return false // No content means it's not a text answer.
+	}
+	for _, block := range message.Content {
+		if block.Type != "text" {
+			return false // Found a non-text block.
+		}
+	}
+	return true // All blocks are of type "text".
+}
