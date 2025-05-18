@@ -253,12 +253,50 @@ func HandleListAgents(w http.ResponseWriter, r *http.Request) {
 
 // GetDefaultAgent loads and returns the default agent implementation
 func GetDefaultAgent() (Agent, error) {
-	defaultAgentFileName := "default.go"
-	defaultAgentFilePath := filepath.Join(agentsDir, defaultAgentFileName)
+	return LoadAgentByName("default")
+}
 
-	if _, err := os.Stat(defaultAgentFilePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("default agent file '%s' not found: %w", defaultAgentFilePath, err)
+// LoadAgentByName loads a specific agent by its base name (e.g., "default", "research_agent")
+func LoadAgentByName(agentName string) (Agent, error) {
+	if agentName == "" {
+		return nil, fmt.Errorf("agent name cannot be empty")
+	}
+	agentFileName := agentName + ".go"
+	agentFilePath := filepath.Join(agentsDir, agentFileName)
+
+	if _, err := os.Stat(agentFilePath); os.IsNotExist(err) {
+		// Attempt to create a default agent file if "default" is requested and doesn't exist.
+		if agentName == "default" {
+			log.Info("Default agent file not found, creating one.", "path", agentFilePath)
+			defaultContent := `package agents
+
+// DefaultGetPrompt provides a basic system prompt.
+func DefaultGetPrompt() string {
+	return "You are a helpful assistant."
+}
+
+// DefaultGetTaskForModelSelection specifies the default task for model selection.
+func DefaultGetTaskForModelSelection() string {
+	return "general_assistance"
+}
+
+// DefaultNormalizeHistory is a placeholder and returns messages as is.
+// func DefaultNormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+// 	return messages
+// }
+`
+			if errWrite := os.WriteFile(agentFilePath, []byte(defaultContent), 0644); errWrite != nil {
+				return nil, fmt.Errorf("failed to create default agent file '%s': %w", agentFilePath, errWrite)
+			}
+			log.Info("Successfully created default agent file.", "path", agentFilePath)
+			// Fall through to load the newly created file.
+		} else {
+			return nil, fmt.Errorf("agent file '%s' not found in '%s': %w", agentFileName, agentsDir, err)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("error checking agent file '%s': %w", agentFilePath, err)
 	}
 
-	return loadAgentFromFile(defaultAgentFilePath)
+
+	return loadAgentFromFile(agentFilePath)
 }

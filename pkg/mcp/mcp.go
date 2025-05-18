@@ -317,6 +317,7 @@ func handleSlashCommand(
 	mcpClients map[string]mcpclient.MCPClient,
 	messages interface{},
 	modelsCfg *ModelsConfig, // Added modelsCfg to access model list
+	currentAgentName string, // Added currentAgentName
 ) (bool, error) {
 	if !strings.HasPrefix(prompt, "/") {
 		return false, nil
@@ -327,7 +328,7 @@ func handleSlashCommand(
 		handleToolsCommand(mcpClients)
 		return true, nil
 	case "/help":
-		handleHelpCommand(modelsCfg) // Pass modelsCfg
+		handleHelpCommand(modelsCfg, currentAgentName) // Pass modelsCfg and currentAgentName
 		return true, nil
 	case "/history":
 		handleHistoryCommand(messages.([]history.HistoryMessage))
@@ -346,8 +347,8 @@ func handleSlashCommand(
 	}
 }
 
-// handleHelpCommand now takes ModelsConfig to list available models
-func handleHelpCommand(modelsCfg *ModelsConfig) {
+// handleHelpCommand now takes ModelsConfig to list available models and the current agent name
+func handleHelpCommand(modelsCfg *ModelsConfig, currentAgentName string) {
 	if err := updateRenderer(); err != nil {
 		fmt.Printf(
 			"\n%s\n",
@@ -366,25 +367,39 @@ func handleHelpCommand(modelsCfg *ModelsConfig) {
 	markdown.WriteString("- **/quit**: Exit the application\n")
 	markdown.WriteString("\nYou can also press Ctrl+C at any time to quit.\n")
 
-	markdown.WriteString("\n## Available Models\n\n")
-	markdown.WriteString(fmt.Sprintf("Specify a model ID using the --model or -m flag. Models are defined in `%s`.\n\n", modelsConfigFile)) // Assuming modelsConfigFile is accessible
+	markdown.WriteString(fmt.Sprintf("\n## Agent and Model Selection (Current Agent: `%s`)\n\n", currentAgentName))
+	markdown.WriteString(fmt.Sprintf("Model selection is driven by agents. Specify an agent using the `--agent` or `-a` flag. Agents are defined in the `agents` directory (e.g., `agents/default.go`).\n"))
+	markdown.WriteString(fmt.Sprintf("The selected agent determines a task (e.g., 'research', 'coding'), and MCPHost picks the best model for that task from `%s` based on `preferences_per_task` scores.\n\n", modelsConfigFile))
+
 	if modelsCfg != nil && len(modelsCfg.Providers) > 0 {
-		markdown.WriteString("Available model IDs:\n")
+		markdown.WriteString("### Available Models (from models.yaml):\n")
 		for _, provider := range modelsCfg.Providers {
 			if len(provider.Models) > 0 {
-				markdown.WriteString(fmt.Sprintf("\n### %s Models\n", strings.Title(provider.Name)))
+				markdown.WriteString(fmt.Sprintf("\n#### %s Models\n", strings.Title(provider.Name)))
 				for _, model := range provider.Models {
-					markdown.WriteString(fmt.Sprintf("- `%s` (Name: %s)\n", model.ID, model.Name))
+					markdown.WriteString(fmt.Sprintf("- **ID:** `%s` (SDK Name: `%s`)\n", model.ID, model.Name))
+					if len(model.PreferencesPerTask) > 0 {
+						markdown.WriteString("  - Preferences: ")
+						prefs := []string{}
+						for task, score := range model.PreferencesPerTask {
+							prefs = append(prefs, fmt.Sprintf("`%s`: %d", task, score))
+						}
+						markdown.WriteString(strings.Join(prefs, ", ") + "\n")
+					}
 				}
 			}
 		}
-		markdown.WriteString("\nExamples:\n")
-		markdown.WriteString("```\n")
-		markdown.WriteString("mcphost -m claude-3-5-sonnet-latest\n")
-		markdown.WriteString("mcphost --models path/to/custom/models.yaml -m my-custom-model-id\n")
+		markdown.WriteString("\n### Examples:\n")
+		markdown.WriteString("```sh\n")
+		markdown.WriteString("# Run with the default agent\n")
+		markdown.WriteString("mcphost --agent default\n\n")
+		markdown.WriteString("# Run with a specific agent (e.g., research_agent.go)\n")
+		markdown.WriteString("mcphost --agent research_agent\n\n")
+		markdown.WriteString("# Specify a custom models configuration file\n")
+		markdown.WriteString("mcphost --agent default --models path/to/your/models.yaml\n")
 		markdown.WriteString("```\n")
 	} else {
-		markdown.WriteString("No models found or models.yaml not loaded.\n")
+		markdown.WriteString("No models found or models.yaml not loaded. Ensure models.yaml is configured.\n")
 	}
 
 	rendered, err := renderer.Render(markdown.String())
