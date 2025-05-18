@@ -1386,31 +1386,61 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 		return "", "", fmt.Errorf("error creating provider (agent '%s', task '%s'): %w", agentName, taskForModelSelection, err)
 	}
 
+	// Initialize PromptRuntimeTweaks for this sub-agent run
+	subAgentTweaker := NewDefaultPromptRuntimeTweaks()
+	// The trace file path for sub-agent will be based on its own jobID.
+	// Example: subAgentTweaker := NewDefaultPromptRuntimeTweaks(filepath.Join(TracesDir, fmt.Sprintf("%s_sub.yaml", subAgentTweaker.jobId)))
+	// For simplicity, using default trace path generation within NewDefaultPromptRuntimeTweaks.
+
 	// runPrompt with isInteractive=false will use logging for output.
 	// It modifies 'messages' in place.
-	err = runPrompt(ctx, provider, agent, McpClients, AllTools, history.NewUserMessage(prompt), &messages, nil, false)
+	// The prompt string itself becomes the content of the first user message.
+	initialUserMessage := history.NewUserMessage(prompt)
+	err = runPrompt(ctx, provider, agent, McpClients, AllTools, initialUserMessage, &messages, subAgentTweaker, false)
 	if err != nil {
 		// Error is already logged by runPrompt or its callees.
 		// Return the error to indicate failure to the main Execute function.
-		return "", "", fmt.Errorf("error processing non-interactive prompt: %w", err)
+		return "", subAgentTweaker.jobId, fmt.Errorf("error processing non-interactive prompt: %w", err)
 	}
 
 	// Print the assistant's final textual response to stdout.
 	// Search backwards for the last assistant message with text content.
 	var lastAssistantText string
 	for i := len(messages) - 1; i >= 0; i-- {
-		if system.IsModelAnswer(messages[i]) {
-			lastAssistantText = messages[i].GetContent()
+		if system.IsModelAnswerAny(messages[i]) { // Changed to IsModelAnswerAny to align with other parts of the code
+			// Iterate through content blocks to find text
+			for _, block := range messages[i].Content {
+				if block.Type == "text" && block.Text != "" {
+					lastAssistantText = block.Text
+					break
+				}
+			}
 			if lastAssistantText != "" {
 				break
 			}
 		}
 	}
 
+	// Get the job ID from the tweaker used in this sub-agent run.
+	// This assumes subAgentTweaker was initialized earlier in this function.
+	// If NewDefaultPromptRuntimeTweaks was called, subAgentTweaker.jobId would be set.
+	// Let's retrieve it from the tweaker instance.
+	jobIDForResult := ""
+	// This part assumes subAgentTweaker is in scope and was initialized.
+	// Based on the previous change, subAgentTweaker should be available.
+	// If subAgentTweaker was passed as nil to runPrompt (as in original code), this would need adjustment.
+	// However, the request is to *implement* jobTweaker, so we assume it's now non-nil.
+	// Let's assume subAgentTweaker is the one created and used.
+	// The variable `subAgentTweaker` was defined in the previous block.
+	if subAgentTweaker != nil {
+		jobIDForResult = subAgentTweaker.jobId
+	}
+
+
 	if lastAssistantText != "" {
-		return lastAssistantText, "", nil
+		return lastAssistantText, jobIDForResult, nil
 	} else {
-		return "", "", fmt.Errorf("No final text response from assistant to print for non-interactive mode.")
+		return "", jobIDForResult, fmt.Errorf("No final text response from assistant to print for non-interactive mode.")
 	}
 
 }
