@@ -17,6 +17,7 @@ type mockMCPClient struct {
 	prompts     []mcp.Prompt
 	resources   []mcp.Resource
 	rateLimited bool
+	mockHander  func(request mcp.CallToolRequest) *mcp.CallToolResult
 	lastCall    time.Time
 }
 
@@ -90,18 +91,12 @@ func (m *mockMCPClient) CallTool(ctx context.Context, request mcp.CallToolReques
 		m.lastCall = time.Now()
 	}
 
-	for _, t := range m.tools {
-		if t.Name == request.Params.Name {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{
-						Text: "mock response",
-					},
-				},
-			}, nil
-		}
+	resp := m.mockHander(request)
+	if resp == nil {
+		return nil, fmt.Errorf("tool not found")
 	}
-	return nil, fmt.Errorf("tool not found")
+	return resp, nil
+
 }
 
 func (m *mockMCPClient) SetLevel(ctx context.Context, request mcp.SetLevelRequest) error {
@@ -119,19 +114,17 @@ func (m *mockMCPClient) Close() error {
 func (m *mockMCPClient) OnNotification(handler func(notification mcp.JSONRPCNotification)) {}
 
 type mockProvider struct {
-	name string
+	name      string
+	responses map[string]history.Message
 }
 
 func (m *mockProvider) CreateMessage(ctx context.Context, prompt string, messages []history.Message, tools []history.Tool) (history.Message, error) {
-	return &history.HistoryMessage{
-		Role: "user",
-		Content: []history.ContentBlock{
-			{
-				Type: "text",
-				Text: prompt,
-			},
-		},
-	}, nil
+	message, found := m.responses[prompt]
+	if found {
+		return message, nil
+	} else {
+		return nil, fmt.Errorf("prompt not found")
+	}
 }
 
 func (m *mockProvider) CreateToolResponse(toolCallID string, content interface{}) (history.Message, error) {
@@ -156,10 +149,30 @@ func (m *mockProvider) Name() string {
 }
 
 func TestMainEntryPoint(t *testing.T) {
-	mockProvider := &mockProvider{name: "mock"}
+	mockProvider := &mockProvider{name: "mock", responses: map[string]history.Message{}}
 	require.NotNil(t, mockProvider)
 
-	mockClient := &mockMCPClient{
+	mockClient := makeMockClient()
+	require.NotNil(t, mockClient)
+
+	mcpClients := map[string]mcpclient.MCPClient{"mock": mockClient}
+	allTools := GenerateToolsFromMCPClients(context.Background(), mcpClients, nil)
+
+	mockProvider.responses["what_time_in_bratislava"] = history.NewToolCallMessage("mock__web_search", map[string]any{"query": "bratislava_links"})
+	msgs := []history.HistoryMessage{}
+	mockClient.mockHander = func(request mcp.CallToolRequest) *mcp.CallToolResult {
+		if request.Params.Name == "mock__web_search" && request.Params.Input["query"] == "bratislava_links" {
+			return &mcp.CallToolResult{}
+		}
+		return nil
+	}
+	runPrompt(currentJobCtx, mockProvider,
+		mcpClients,
+		allTools, "what_time_in_bratislava", &msgs, nil, false)
+}
+
+func makeMockClient() *mockMCPClient {
+	return &mockMCPClient{
 		tools: []mcp.Tool{
 			{
 				Name:        "web_search",
@@ -198,14 +211,4 @@ func TestMainEntryPoint(t *testing.T) {
 			},
 		},
 	}
-	require.NotNil(t, mockClient)
-
-	mcpClients := map[string]mcpclient.MCPClient{"mock": mockClient}
-	var allTools []history.Tool
-	GenerateToolsFromMCPClients(context.Background(), mcpClients, allTools)
-
-	msgs := []history.HistoryMessage{}
-	runPrompt(currentJobCtx, mockProvider,
-		mcpClients,
-		allTools, "what_time_in_bratislava", &msgs, nil, false)
 }
