@@ -13,3 +13,4 @@ contribute/output/
 mcp.json
 mcphost.go
 models.yaml
+github_com-sannysanoff-mcphost-pkg-*.go
