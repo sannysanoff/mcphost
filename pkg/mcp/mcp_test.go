@@ -2,10 +2,10 @@ package mcp
 
 import (
 	"context"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"pkg/history"
 )
 
 type mockProvider struct {
@@ -48,7 +48,7 @@ func (m *mockProvider) Name() string {
 func TestMainEntryPoint(t *testing.T) {
 	mockProvider := &mockProvider{name: "mock"}
 	require.NotNil(t, mockProvider)
-	
+
 	// TODO: Add actual test cases using the mock provider
-	// runPrompt(currentJobCtx, mockProvider, nil, nil, nil, nil, nil, nil, nil)
+	runPrompt(currentJobCtx, mockProvider, nil, nil, nil, nil, nil, nil, nil)
 }
