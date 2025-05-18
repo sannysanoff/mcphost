@@ -69,7 +69,13 @@ func getAgentInfoFromFile(agentFilePath string, i *interp.Interpreter) (*AgentIn
 }
 
 func makePascalCase(name string) string {
-	// from camel_case produce PascalCase
+	parts := strings.Split(name, "_")
+	for i := range parts {
+		if len(parts[i]) > 0 {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
 }
 
 // HandleListAgents discovers agents in the 'agents' directory and returns their default prompts.
