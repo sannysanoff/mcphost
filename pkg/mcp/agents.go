@@ -103,8 +103,15 @@ func (a *yaegiAgent) callStringMethod(methodSuffix string, defaultValue string) 
 }
 
 // callNormalizeHistoryMethod calls the NormalizeHistory method on the agent.
-// If the method doesn't exist, an error occurs, or it doesn't return []history.HistoryMessage, the original messages are returned.
-func (a *yaegiAgent) callNormalizeHistoryMethod(messages []history.HistoryMessage) []history.HistoryMessage {
+func (a *yaegiAgent) GetSystemPrompt() string {
+	return a.callStringMethod("GetPrompt", "")
+}
+
+func (a *yaegiAgent) GetTaskForModelSelection() string {
+	return a.callStringMethod("GetTaskForModelSelection", "default")
+}
+
+func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
 	if err := a.checkAndReload(); err != nil {
 		log.Error("Failed to check/reload agent for NormalizeHistory", "agent", a.filename, "error", err)
 		return messages
@@ -134,18 +141,6 @@ func (a *yaegiAgent) callNormalizeHistoryMethod(messages []history.HistoryMessag
 		log.Warn("NormalizeHistory function returned invalid or uninterfaceable value", "agent", a.filename, "func", normalizeFuncName)
 	}
 	return messages
-}
-
-func (a *yaegiAgent) GetSystemPrompt() string {
-	return a.callStringMethod("GetPrompt", "")
-}
-
-func (a *yaegiAgent) GetTaskForModelSelection() string {
-	return a.callStringMethod("GetTaskForModelSelection", "default")
-}
-
-func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
-	return a.callNormalizeHistoryMethod(messages)
 }
 
 func (a *yaegiAgent) Filename() string {
