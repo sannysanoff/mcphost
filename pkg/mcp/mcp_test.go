@@ -180,7 +180,7 @@ func TestMainEntryPoint(t *testing.T) {
 		resources: []mcp.Resource{
 			{
 				Name: "test_resource",
-				Kind: "test",
+				URI:  "test://resource",
 			},
 		},
 	}
