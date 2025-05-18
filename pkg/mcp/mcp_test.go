@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/sannysanoff/mcphost/pkg/history"
 	"testing"
 	"time"
@@ -123,11 +124,11 @@ type mockProvider struct {
 
 func (m *mockProvider) CreateMessage(ctx context.Context, prompt string, messages []history.Message, tools []history.Tool) (history.Message, error) {
 	return &history.HistoryMessage{
-		Role: "assistant",
+		Role: "user",
 		Content: []history.ContentBlock{
 			{
 				Type: "text",
-				Text: "Mock response",
+				Text: prompt,
 			},
 		},
 	}, nil
@@ -161,31 +162,28 @@ func TestMainEntryPoint(t *testing.T) {
 	mockClient := &mockMCPClient{
 		tools: []mcp.Tool{
 			{
-				Name:        "test_tool",
-				Description: "Test tool",
-			},
-		},
-		prompts: []mcp.Prompt{
-			{
-				Name: "test_prompt",
-				Description: "Test prompt",
-				Arguments: []mcp.PromptArgument{
-					{
-						Name: "test_arg",
-						Description: "Test argument",
-					},
+				Name:        "web_search",
+				Description: "Web search tool",
+				InputSchema: mcp.ToolInputSchema{
+					Type:       "",
+					Properties: nil,
+					Required:   nil,
 				},
 			},
-		},
-		resources: []mcp.Resource{
 			{
-				Name: "test_resource",
-				URI:  "test://resource",
+				Name:        "web_fetch",
+				Description: "Web fetch tool",
 			},
 		},
 	}
 	require.NotNil(t, mockClient)
 
-	// TODO: Add actual test cases using the mock provider and client
-	// runPrompt(currentJobCtx, mockProvider, mockClient, nil, nil, nil, nil, nil, nil)
+	mcpClients := map[string]mcpclient.MCPClient{"mock": mockClient}
+	var allTools []history.Tool
+	GenerateToolsFromMCPClients(context.Background(), mcpClients, allTools)
+
+	msgs := []history.HistoryMessage{}
+	runPrompt(currentJobCtx, mockProvider,
+		mcpClients,
+		allTools, "what_time_in_bratislava", &msgs, nil, false)
 }
