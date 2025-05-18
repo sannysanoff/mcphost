@@ -56,6 +56,15 @@ func (m *HistoryMessage) IsToolResponse() bool {
 	return false
 }
 
+func GetToolResults(m *HistoryMessage) any {
+	for _, block := range m.Content {
+		if block.Type == "tool_result" {
+			return block.Content
+		}
+	}
+	return ""
+}
+
 func (m *HistoryMessage) GetToolResponseID() string {
 	for _, block := range m.Content {
 		if block.Type == "tool_result" {
@@ -104,10 +113,10 @@ type ContentBlock struct {
 }
 
 // NewToolCallMessage creates a new assistant message with a tool call request
-func NewToolCallMessage(toolName string, args map[string]interface{}) (*HistoryMessage, error) {
+func NewToolCallMessage(toolName string, args map[string]interface{}) *HistoryMessage {
 	argsJSON, err := json.Marshal(args)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 
 	return &HistoryMessage{
@@ -119,7 +128,7 @@ func NewToolCallMessage(toolName string, args map[string]interface{}) (*HistoryM
 				Input: argsJSON,
 			},
 		},
-	}, nil
+	}
 }
 
 // Ensure ContentBlock implements yaml.Marshaler and yaml.Unmarshaler if custom logic for json.RawMessage or interface{} is needed.
