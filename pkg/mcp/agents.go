@@ -17,60 +17,86 @@ import (
 	systemsymbols "github.com/sannysanoff/mcphost"
 )
 
-// AgentInfo holds information about a discovered agent.
-type AgentInfo struct {
-	Name          string `json:"name"`
-	DefaultPrompt string `json:"default_prompt"`
+// Agent represents a loaded agent with its interpreter and methods
+type Agent interface {
+	// GetSystemPrompt returns the agent's default system prompt
+	GetSystemPrompt() string
+	
+	// NormalizeHistory processes and normalizes message history
+	NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage
+	
+	// Filename returns the source file name of this agent
+	Filename() string
 }
 
-type Agent interface {
-	GetSystemPrompt() string
+type yaegiAgent struct {
+	filename    string
+	interpreter *interp.Interpreter
+}
+
+func (a *yaegiAgent) GetSystemPrompt() string {
+	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
+	promptFuncName := makePascalCase(baseName) + "GetPrompt"
+	
+	evalStr := fmt.Sprintf("agents.%s()", promptFuncName)
+	val, err := a.interpreter.Eval(evalStr)
+	if err != nil {
+		log.Error("Failed to call prompt function", "agent", a.filename, "func", promptFuncName, "error", err)
+		return ""
+	}
+	
+	if val.Kind() == reflect.String {
+		return val.String()
+	}
+	return ""
+}
+
+func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
+	normalizeFuncName := makePascalCase(baseName) + "NormalizeHistory"
+	
+	evalStr := fmt.Sprintf("agents.%s(%#v)", normalizeFuncName, messages)
+	val, err := a.interpreter.Eval(evalStr)
+	if err != nil {
+		log.Error("Failed to call normalize function", "agent", a.filename, "func", normalizeFuncName, "error", err)
+		return messages
+	}
+	
+	if val.IsValid() && val.CanInterface() {
+		if result, ok := val.Interface().([]history.HistoryMessage); ok {
+			return result
+		}
+	}
+	return messages
+}
+
+func (a *yaegiAgent) Filename() string {
+	return a.filename
 }
 
 const agentsDir = "./agents" // Assuming agents are in a directory named 'agents' relative to the running binary.
 
-// getAgentInfoFromFile reads an agent file, evaluates it using the provided Yaegi interpreter,
-// and extracts its name and default prompt.
-func getAgentInfoFromFile(agentFilePath string, i *interp.Interpreter) (*AgentInfo, error) {
-	agentName := strings.TrimSuffix(filepath.Base(agentFilePath), ".go")
-	// Construct the conventional function name, e.g., "default" -> "DefaultGetPrompt"
-	// Yaegi expects functions to be capitalized for export.
-	baseName := strings.Title(agentName) // Ensures first letter is capitalized
-	promptFuncName := makePascalCase(baseName) + "GetPrompt"
-
-	log.Debug("Processing agent file", "path", agentFilePath, "agentName", agentName, "promptFunc", promptFuncName)
+// loadAgentFromFile reads an agent file and returns an initialized Agent instance
+func loadAgentFromFile(agentFilePath string) (Agent, error) {
+	i := interp.New(interp.Options{})
+	i.Use(stdlib.Symbols)
+	i.Use(systemsymbols.Symbols)
 
 	agentFileContent, err := os.ReadFile(agentFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read agent file %s: %w", agentFilePath, err)
 	}
 
-	// Evaluate the agent's Go code. Agent files are expected to be in `package agents`.
+	// Evaluate the agent's Go code
 	_, err = i.Eval(string(agentFileContent))
 	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate agent code with Yaegi for file %s: %w", agentFilePath, err)
+		return nil, fmt.Errorf("failed to evaluate agent code: %w", err)
 	}
 
-	// Call the GetPrompt function (e.g., agents.DefaultGetPrompt())
-	// Yaegi symbols are typically package-qualified.
-	evalStr := fmt.Sprintf("agents.%s()", promptFuncName)
-	val, err := i.Eval(evalStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call prompt function via Yaegi for file %s (eval string: %s): %w", agentFilePath, evalStr, err)
-	}
-
-	// Extract the prompt string
-	if val.Kind() == reflect.String {
-		prompt := val.String()
-		log.Debug("Successfully retrieved prompt", "agent", agentName, "prompt", prompt)
-		retval := &AgentInfo{
-			Name:          agentName,
-			DefaultPrompt: prompt,
-		}
-		return retval, nil
-	}
-
-	return nil, fmt.Errorf("prompt function %s in file %s did not return a string, got type: %s", promptFuncName, agentFilePath, val.Kind().String())
+	return &yaegiAgent{
+		filename:    filepath.Base(agentFilePath),
+		interpreter: i,
+	}, nil
 }
 
 func makePascalCase(name string) string {
@@ -97,55 +123,49 @@ func HandleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var agentsInfoList []AgentInfo
-	i := interp.New(interp.Options{})
-	i.Use(stdlib.Symbols)        // Provide access to Go standard library symbols
-	i.Use(systemsymbols.Symbols) // Provide access to symbols from github.com/mark3labs/mcphost
-
+	var agents []Agent
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".go") || file.Name() == "agents.go" {
-			// Skip directories, non-Go files, and this handler file itself
 			continue
 		}
 
 		agentFilePath := filepath.Join(agentsDir, file.Name())
-		info, err := getAgentInfoFromFile(agentFilePath, i)
+		agent, err := loadAgentFromFile(agentFilePath)
 		if err != nil {
-			log.Warn("Failed to get agent info", "file", agentFilePath, "error", err)
-			continue // Skip this agent
+			log.Warn("Failed to load agent", "file", agentFilePath, "error", err)
+			continue
 		}
-		agentsInfoList = append(agentsInfoList, *info)
+		agents = append(agents, agent)
+	}
+
+	type agentInfo struct {
+		Name          string `json:"name"`
+		DefaultPrompt string `json:"default_prompt"`
+	}
+	
+	var response []agentInfo
+	for _, agent := range agents {
+		response = append(response, agentInfo{
+			Name:          strings.TrimSuffix(agent.Filename(), ".go"),
+			DefaultPrompt: agent.GetSystemPrompt(),
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(agentsInfoList); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Error("/agents: Failed to encode agents information to JSON", "error", err)
 		http.Error(w, "Failed to encode response: "+err.Error(), http.StatusInternalServerError)
 	}
 }
 
-// GetDefaultAgentSystemPrompt attempts to load the system prompt from the 'default.go' agent.
-// It returns the prompt string or an error if the agent or prompt cannot be loaded.
-func GetDefaultAgentSystemPrompt() (string, error) {
+// GetDefaultAgent loads and returns the default agent implementation
+func GetDefaultAgent() (Agent, error) {
 	defaultAgentFileName := "default.go"
 	defaultAgentFilePath := filepath.Join(agentsDir, defaultAgentFileName)
 
 	if _, err := os.Stat(defaultAgentFilePath); os.IsNotExist(err) {
-		return "", fmt.Errorf("default agent file '%s' not found: %w", defaultAgentFilePath, err)
+		return nil, fmt.Errorf("default agent file '%s' not found: %w", defaultAgentFilePath, err)
 	}
 
-	i := interp.New(interp.Options{})
-	i.Use(stdlib.Symbols)        // Provide access to Go standard library symbols
-	i.Use(systemsymbols.Symbols) // Provide access to symbols from github.com/mark3labs/mcphost
-
-	agentInfo, err := getAgentInfoFromFile(defaultAgentFilePath, i)
-	if err != nil {
-		return "", fmt.Errorf("failed to get info from default agent file '%s': %w", defaultAgentFilePath, err)
-	}
-
-	if agentInfo == nil {
-		return "", fmt.Errorf("no agent info returned from default agent file '%s'", defaultAgentFilePath)
-	}
-
-	return agentInfo.DefaultPrompt, nil
+	return loadAgentFromFile(defaultAgentFilePath)
 }
