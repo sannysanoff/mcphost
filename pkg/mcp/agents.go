@@ -23,6 +23,10 @@ type AgentInfo struct {
 	DefaultPrompt string `json:"default_prompt"`
 }
 
+type Agent interface {
+	GetSystemPrompt() string
+}
+
 const agentsDir = "./agents" // Assuming agents are in a directory named 'agents' relative to the running binary.
 
 // getAgentInfoFromFile reads an agent file, evaluates it using the provided Yaegi interpreter,
@@ -59,10 +63,11 @@ func getAgentInfoFromFile(agentFilePath string, i *interp.Interpreter) (*AgentIn
 	if val.Kind() == reflect.String {
 		prompt := val.String()
 		log.Debug("Successfully retrieved prompt", "agent", agentName, "prompt", prompt)
-		return &AgentInfo{
+		retval := &AgentInfo{
 			Name:          agentName,
 			DefaultPrompt: prompt,
-		}, nil
+		}
+		return retval, nil
 	}
 
 	return nil, fmt.Errorf("prompt function %s in file %s did not return a string, got type: %s", promptFuncName, agentFilePath, val.Kind().String())
