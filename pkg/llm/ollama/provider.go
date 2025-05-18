@@ -5,14 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"strings"
 
 	"github.com/charmbracelet/log"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/ollama/ollama/api"
-
-	"github.com/mark3labs/mcphost/pkg/history"
-	"github.com/mark3labs/mcphost/pkg/llm"
 )
 
 func boolPtr(b bool) *bool {
@@ -42,9 +40,9 @@ func NewProvider(model string, systemPrompt string) (*Provider, error) {
 func (p *Provider) CreateMessage(
 	ctx context.Context,
 	prompt string,
-	messages []llm.Message,
-	tools []llm.Tool,
-) (llm.Message, error) {
+	messages []history.Message,
+	tools []history.Tool,
+) (history.Message, error) {
 	log.Debug("creating message",
 		"prompt", prompt,
 		"num_messages", len(messages),
@@ -217,7 +215,7 @@ func (p *Provider) Name() string {
 func (p *Provider) CreateToolResponse(
 	toolCallID string,
 	content interface{},
-) (llm.Message, error) {
+) (history.Message, error) {
 	log.Debug("creating tool response",
 		"tool_call_id", toolCallID,
 		"content_type", fmt.Sprintf("%T", content),

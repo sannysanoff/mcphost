@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"strings"
 
-	"github.com/mark3labs/mcphost/pkg/history"
-	"github.com/mark3labs/mcphost/pkg/llm"
 	"google.golang.org/genai"
 )
 
@@ -38,7 +37,7 @@ func NewProvider(ctx context.Context, apiKey, model, systemPrompt string) (*Prov
 	}, nil
 }
 
-func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []llm.Message, tools []llm.Tool) (llm.Message, error) {
+func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []history.Message, tools []history.Tool) (history.Message, error) {
 
 	thinkingBudget := int32(2000)
 	var config *genai.GenerateContentConfig = &genai.GenerateContentConfig{
@@ -207,7 +206,7 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 	return m, nil
 }
 
-func (p *Provider) CreateToolResponse(toolCallID string, content any) (llm.Message, error) {
+func (p *Provider) CreateToolResponse(toolCallID string, content any) (history.Message, error) {
 	// UNUSED: Nothing in root.go calls this.
 	return nil, nil
 }
@@ -221,7 +220,7 @@ func (p *Provider) Name() string {
 	return "Google"
 }
 
-func translateToGoogleSchema(schema llm.Schema) *genai.Schema {
+func translateToGoogleSchema(schema history.Schema) *genai.Schema {
 	s := &genai.Schema{
 		Type:       toType(schema.Type),
 		Required:   schema.Required,

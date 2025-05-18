@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"github.com/mark3labs/mcphost/pkg/history"
-	"github.com/mark3labs/mcphost/pkg/llm"
 )
 
 type Provider struct {
@@ -17,7 +16,7 @@ type Provider struct {
 	systemPrompt string
 }
 
-func convertSchema(schema llm.Schema) map[string]interface{} {
+func convertSchema(schema history.Schema) map[string]interface{} {
 	// Ensure required is a valid array, defaulting to empty if nil
 	required := schema.Required
 	if required == nil {
@@ -42,9 +41,9 @@ func NewProvider(apiKey, baseURL, model, systemPrompt string) *Provider {
 func (p *Provider) CreateMessage(
 	ctx context.Context,
 	prompt string,
-	messages []llm.Message,
-	tools []llm.Tool,
-) (llm.Message, error) {
+	messages []history.Message,
+	tools []history.Tool,
+) (history.Message, error) {
 	log.Debug("creating message",
 		"prompt", prompt,
 		"num_messages", len(messages),
@@ -206,7 +205,7 @@ func (p *Provider) Name() string {
 func (p *Provider) CreateToolResponse(
 	toolCallID string,
 	content interface{},
-) (llm.Message, error) {
+) (history.Message, error) {
 	log.Debug("creating tool response",
 		"tool_call_id", toolCallID,
 		"content_type", fmt.Sprintf("%T", content),
@@ -308,8 +307,8 @@ func (m *Message) GetContent() string {
 	return *m.Choice.Message.Content
 }
 
-func (m *Message) GetToolCalls() []llm.ToolCall {
-	var calls []llm.ToolCall
+func (m *Message) GetToolCalls() []history.ToolCall {
+	var calls []history.ToolCall
 	for _, call := range m.Choice.Message.ToolCalls {
 		calls = append(calls, &ToolCallWrapper{call})
 	}

@@ -8,7 +8,6 @@ GO_FILES := $(shell find . -name '*.go' -not -path "./vendor/*")
 all: build
 
 # Runs go generate for all packages in the current module.
-# This will execute commands like 'yaegi-extract'.
 generate:
 	@echo "--- Generating code ---"
 	@go generate 

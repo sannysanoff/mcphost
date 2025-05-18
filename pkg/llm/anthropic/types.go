@@ -3,10 +3,10 @@ package anthropic
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"github.com/mark3labs/mcphost/pkg/llm"
 )
 
 type CreateRequest struct {
@@ -119,8 +119,8 @@ func (m *Message) GetContent() string {
 	return result
 }
 
-func (m *Message) GetToolCalls() []llm.ToolCall {
-	var calls []llm.ToolCall
+func (m *Message) GetToolCalls() []history.ToolCall {
+	var calls []history.ToolCall
 	for _, block := range m.Msg.Content {
 		if block.Type == "tool_use" {
 			calls = append(calls, &ToolCall{

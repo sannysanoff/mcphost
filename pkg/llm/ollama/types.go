@@ -2,10 +2,10 @@ package ollama
 
 import (
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"strings"
 	"time"
 
-	"github.com/mark3labs/mcphost/pkg/llm"
 	api "github.com/ollama/ollama/api"
 )
 
@@ -24,8 +24,8 @@ func (m *OllamaMessage) GetContent() string {
 	return strings.TrimSpace(m.Message.Content)
 }
 
-func (m *OllamaMessage) GetToolCalls() []llm.ToolCall {
-	var calls []llm.ToolCall
+func (m *OllamaMessage) GetToolCalls() []history.ToolCall {
+	var calls []history.ToolCall
 	for _, call := range m.Message.ToolCalls {
 		calls = append(calls, NewOllamaToolCall(call))
 	}

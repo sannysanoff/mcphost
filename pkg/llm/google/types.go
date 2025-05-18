@@ -2,9 +2,9 @@ package google
 
 import (
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"strings"
 
-	"github.com/mark3labs/mcphost/pkg/llm"
 	"google.golang.org/genai"
 )
 
@@ -49,14 +49,14 @@ func (m *Message) GetContent() string {
 	return sb.String()
 }
 
-func (m *Message) GetToolCalls() []llm.ToolCall {
-	var calls []llm.ToolCall
+func (m *Message) GetToolCalls() []history.ToolCall {
+	var calls []history.ToolCall
 	if m.Candidate != nil && m.Candidate.Content != nil {
 		for i, part := range m.Candidate.Content.Parts {
 			if part.FunctionCall != nil {
 				// Create a new genai.FunctionCall instance for the ToolCall struct
 				// as genai.FunctionCall is a struct, not a pointer in Part.
-				fc := *part.FunctionCall 
+				fc := *part.FunctionCall
 				calls = append(calls, &ToolCall{fc, m.toolCallID + i})
 			}
 		}

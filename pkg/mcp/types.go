@@ -2,10 +2,10 @@ package mcp
 
 import (
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"os"
 	"path/filepath"
 
-	"github.com/mark3labs/mcphost/pkg/history"
 	"gopkg.in/yaml.v3"
 )
 
