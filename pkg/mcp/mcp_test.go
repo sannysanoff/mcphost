@@ -93,8 +93,7 @@ func (m *mockMCPClient) CallTool(ctx context.Context, request mcp.CallToolReques
 		if t.Name == request.Params.Name {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
-					{
-						Type: "text",
+					&mcp.TextContent{
 						Text: "mock response",
 					},
 				},
