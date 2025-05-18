@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/log"
 	"github.com/traefik/yaegi/interp"
@@ -31,11 +32,34 @@ type Agent interface {
 }
 
 type yaegiAgent struct {
-	filename    string
-	interpreter *interp.Interpreter
+	filename     string
+	fullPath     string
+	interpreter  *interp.Interpreter
+	lastCheck    int64
+	lastModTime  time.Time
+	cachedPrompt string
 }
 
 func (a *yaegiAgent) GetSystemPrompt() string {
+	now := time.Now().Unix()
+	if now-a.lastCheck < 1 && a.cachedPrompt != "" {
+		return a.cachedPrompt
+	}
+
+	// Check file modification time
+	info, err := os.Stat(a.fullPath)
+	if err != nil {
+		log.Error("Failed to stat agent file", "file", a.fullPath, "error", err)
+		return ""
+	}
+
+	// If file hasn't changed and we have cached prompt, return it
+	if !info.ModTime().After(a.lastModTime) && a.cachedPrompt != "" {
+		a.lastCheck = now
+		return a.cachedPrompt
+	}
+
+	// File changed or no cache - re-evaluate
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
 	promptFuncName := makePascalCase(baseName) + "GetPrompt"
 
@@ -47,7 +71,10 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 	}
 
 	if val.Kind() == reflect.String {
-		return val.String()
+		a.lastModTime = info.ModTime()
+		a.lastCheck = now
+		a.cachedPrompt = val.String()
+		return a.cachedPrompt
 	}
 	return ""
 }
@@ -96,7 +123,9 @@ func loadAgentFromFile(agentFilePath string) (Agent, error) {
 
 	return &yaegiAgent{
 		filename:    filepath.Base(agentFilePath),
+		fullPath:    agentFilePath,
 		interpreter: i,
+		lastCheck:   0,
 	}, nil
 }
 
