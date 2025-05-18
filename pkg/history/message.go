@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/mark3labs/mcphost/pkg/llm"
 	_ "gopkg.in/yaml.v3" // Used for YAML struct tags, actual (un)marshalling happens elsewhere
 )
 
@@ -34,8 +33,8 @@ func (m *HistoryMessage) GetContent() string {
 	return strings.TrimSpace(content)
 }
 
-func (m *HistoryMessage) GetToolCalls() []llm.ToolCall {
-	var calls []llm.ToolCall
+func (m *HistoryMessage) GetToolCalls() []ToolCall {
+	var calls []ToolCall
 	for _, block := range m.Content {
 		if block.Type == "tool_use" {
 			calls = append(calls, &HistoryToolCall{
@@ -97,11 +96,11 @@ func (t *HistoryToolCall) GetArguments() map[string]interface{} {
 type ContentBlock struct {
 	Type      string          `json:"type" yaml:"type"`
 	Text      string          `json:"text,omitempty" yaml:"text,omitempty"`
-	ID        string          `json:"id,omitempty" yaml:"id,omitempty"`       // Used for tool_use block
+	ID        string          `json:"id,omitempty" yaml:"id,omitempty"`                   // Used for tool_use block
 	ToolUseID string          `json:"tool_use_id,omitempty" yaml:"tool_use_id,omitempty"` // Used for tool_result block
-	Name      string          `json:"name,omitempty" yaml:"name,omitempty"`       // Used for tool_use block
-	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty"`     // Used for tool_use block
-	Content   interface{}     `json:"content,omitempty" yaml:"content,omitempty"` // Used for tool_result block, can be string or []ContentBlock
+	Name      string          `json:"name,omitempty" yaml:"name,omitempty"`               // Used for tool_use block
+	Input     json.RawMessage `json:"input,omitempty" yaml:"input,omitempty"`             // Used for tool_use block
+	Content   interface{}     `json:"content,omitempty" yaml:"content,omitempty"`         // Used for tool_result block, can be string or []ContentBlock
 }
 
 // Ensure ContentBlock implements yaml.Marshaler and yaml.Unmarshaler if custom logic for json.RawMessage or interface{} is needed.
