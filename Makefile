@@ -7,10 +7,11 @@ GO_FILES := $(shell find . -name '*.go' -not -path "./vendor/*")
 
 all: build
 
-# Runs go generate for all packages in the current module.
+# Generate yaegi symbols for system and history packages
 generate:
-	@echo "--- Generating code ---"
-	@go generate 
+	@echo "--- Generating yaegi symbols ---"
+	@yaegi github.com/sannysanoff/mcphost/pkg/system github.com/sannysanoff/mcphost/pkg/history
+	@echo "Generated github_com-sannysanoff-mcphost-pkg-system.go and github_com-sannysanoff-mcphost-pkg-history.go"
 
 # Builds the application. Depends on 'generate' to ensure symbols are created first.
 build: generate
