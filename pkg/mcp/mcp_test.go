@@ -92,8 +92,11 @@ func (m *mockMCPClient) CallTool(ctx context.Context, request mcp.CallToolReques
 	for _, t := range m.tools {
 		if t.Name == request.Params.Name {
 			return &mcp.CallToolResult{
-				Output: map[string]interface{}{
-					"mock": "response",
+				Content: []mcp.Content{
+					{
+						Type: "text",
+						Text: "mock response",
+					},
 				},
 			}, nil
 		}
@@ -166,7 +169,13 @@ func TestMainEntryPoint(t *testing.T) {
 		prompts: []mcp.Prompt{
 			{
 				Name: "test_prompt",
-				Text: "Test prompt",
+				Description: "Test prompt",
+				Arguments: []mcp.PromptArgument{
+					{
+						Name: "test_arg",
+						Description: "Test argument",
+					},
+				},
 			},
 		},
 		resources: []mcp.Resource{
