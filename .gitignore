@@ -12,3 +12,4 @@ dist/
 contribute/output/
 mcp.json
 mcphost.go
+models.yaml

@@ -7,18 +7,19 @@ require (
 	github.com/charmbracelet/huh/spinner v0.0.0-20241127125741-aad810dfbce6
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/charmbracelet/log v0.4.0
-	github.com/google/generative-ai-go v0.19.0
+	github.com/google/generative-ai-go v0.20.1
 	github.com/mark3labs/mcp-go v0.20.0
 	github.com/ollama/ollama v0.5.1
 	github.com/spf13/cobra v1.8.1
 	github.com/traefik/yaegi v0.16.1
 	golang.org/x/term v0.30.0
 	google.golang.org/api v0.228.0
+	google.golang.org/genai v1.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	cloud.google.com/go v0.115.0 // indirect
+	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/ai v0.8.0 // indirect
 	cloud.google.com/go/auth v0.15.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
@@ -32,11 +33,13 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect

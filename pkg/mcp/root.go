@@ -41,7 +41,7 @@ var (
 	renderer *glamour.TermRenderer
 
 	// Shared flags/config
-	configFile       string
+	configFile string
 	// systemPromptFile string // Removed
 	messageWindow    int
 	modelFlag        string // Model ID (from models.yaml)
@@ -626,7 +626,8 @@ func runPrompt(
 			toolResponseBlockForHistory := history.ContentBlock{
 				Type:      "tool_result",
 				ToolUseID: toolCall.GetID(),
-				Content:   historyToolResultContent,                // Store the structured content
+				Content:   historyToolResultContent, // Store the structured content
+				Name:      toolCall.GetName(),
 				Text:      strings.TrimSpace(resultTextForDisplay), // Store concatenated text for GetContent() compatibility if needed
 			}
 			log.Debug("created tool result block for history", "block", toolResponseBlockForHistory)
@@ -716,18 +717,11 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 
 	// System prompt will be fetched from the default agent or set by other means.
 	// For now, initialize as empty for CLI mode. Server mode handles it via request.
-	systemPrompt := ""
-	// TODO: Implement fetching system prompt from default agent.
-	// This would involve:
-	// 1. Defining how to identify the "default" agent (e.g., from /agents endpoint).
-	// 2. Fetching agent details and extracting its system prompt.
-	// Example placeholder:
-	// defaultAgentSystemPrompt, err := fetchDefaultAgentSystemPrompt()
-	// if err != nil {
-	//     log.Warn("Could not fetch default agent system prompt", "error", err)
-	// } else {
-	//     systemPrompt = defaultAgentSystemPrompt
-	// }
+
+	systemPrompt, err := GetDefaultAgentSystemPrompt()
+	if err != nil {
+		return fmt.Errorf("error getting default system prompt: %v", modelFlag, err)
+	}
 
 	// Create the provider using the model ID from modelFlag and the loaded modelsCfg
 	provider, err := createProvider(ctx, modelFlag, systemPrompt, modelsCfg)

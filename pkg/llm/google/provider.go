@@ -40,11 +40,13 @@ func NewProvider(ctx context.Context, apiKey, model, systemPrompt string) (*Prov
 
 func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []llm.Message, tools []llm.Tool) (llm.Message, error) {
 
-	thinkingBudget := int32(100)
+	thinkingBudget := int32(2000)
 	var config *genai.GenerateContentConfig = &genai.GenerateContentConfig{
-		HTTPOptions:          nil,
-		SystemInstruction:    nil,
-		Temperature:          genai.Ptr[float32](0.5),
+		HTTPOptions: nil,
+		SystemInstruction: &genai.Content{
+			Parts: []*genai.Part{genai.NewPartFromText(p.systemPrompt)},
+		},
+		Temperature:          genai.Ptr[float32](0.6),
 		TopP:                 nil,
 		TopK:                 nil,
 		CandidateCount:       0,
@@ -61,13 +63,17 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 		ModelSelectionConfig: nil,
 		SafetySettings:       nil,
 		Tools:                nil,
-		ToolConfig:           nil,
-		Labels:               nil,
-		CachedContent:        "",
-		ResponseModalities:   nil,
-		MediaResolution:      "",
-		SpeechConfig:         nil,
-		AudioTimestamp:       false,
+		ToolConfig: &genai.ToolConfig{
+			FunctionCallingConfig: &genai.FunctionCallingConfig{
+				Mode: genai.FunctionCallingConfigModeAuto,
+			},
+		},
+		Labels:             nil,
+		CachedContent:      "",
+		ResponseModalities: nil,
+		MediaResolution:    "",
+		SpeechConfig:       nil,
+		AudioTimestamp:     false,
 		ThinkingConfig: &genai.ThinkingConfig{
 			IncludeThoughts: true,
 			ThinkingBudget:  &thinkingBudget,
@@ -123,11 +129,7 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 
 				var responseData map[string]any
 				if err := json.Unmarshal([]byte(responseText), &responseData); err != nil {
-					// If not a JSON object, Gemini might require it to be.
-					// Wrapping as {"output": responseText} is a common pattern if the tool returns a simple string.
-					// However, the function's schema should define the output structure.
-					// For now, strict parsing; if this fails often, consider a fallback.
-					return nil, fmt.Errorf("tool response content for %s is not a valid JSON object: %s, error: %w", funcName, responseText, err)
+					responseData = map[string]any{"data": responseText}
 				}
 				parts = append(parts, genai.NewPartFromFunctionResponse(funcName, responseData))
 				// Ensure role for tool response is "user" as genai lib only supports "user" & "model"
@@ -146,18 +148,17 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 		}
 	}
 
-	chat, err := p.client.Chats.Create(ctx, p.model, config, nil)
-
 	for _, tool := range tools {
-		config.Tools = append(config.Tools, &genai.Tool{
-			FunctionDeclarations: []*genai.FunctionDeclaration{
-				{
-					Name:        tool.Name,
-					Description: tool.Description,
-					Parameters:  translateToGoogleSchema(tool.InputSchema),
-				},
-			},
-		})
+		if config.Tools == nil {
+			config.Tools = make([]*genai.Tool, 1)
+			config.Tools[0] = &genai.Tool{}
+		}
+		decl := &genai.FunctionDeclaration{
+			Name:        tool.Name,
+			Description: tool.Description,
+			Parameters:  translateToGoogleSchema(tool.InputSchema),
+		}
+		config.Tools[0].FunctionDeclarations = append(config.Tools[0].FunctionDeclarations, decl)
 	}
 
 	config.ToolConfig = &genai.ToolConfig{
@@ -165,8 +166,12 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 			Mode: genai.FunctionCallingConfigModeAuto, // Use new constant
 		}}
 
-	// Send the new prompt as a distinct part.
 	promptPart := genai.NewPartFromText(prompt)
+	if prompt == "" {
+		promptPart = hist[len(hist)-1].Parts[0]
+		hist = hist[:len(hist)-1]
+	}
+	chat, err := p.client.Chats.Create(ctx, p.model, config, hist)
 	resp, err := chat.SendMessage(ctx, *promptPart)
 	if err != nil {
 		return nil, err

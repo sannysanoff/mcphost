@@ -153,11 +153,11 @@ func loadMCPConfig() (*MCPConfig, error) {
 	if configFile != "" {
 		configPath = configFile
 	} else {
-		homeDir, err := os.UserHomeDir()
+		homeDir, err := os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("error getting home directory: %w", err)
+			return nil, fmt.Errorf("error getting working directory: %w", err)
 		}
-		configPath = filepath.Join(homeDir, ".mcp.json")
+		configPath = filepath.Join(homeDir, "mcp.json")
 	}
 
 	// Check if config file exists
