@@ -7,11 +7,25 @@ GO_FILES := $(shell find . -name '*.go' -not -path "./vendor/*")
 
 all: build
 
-# Generate yaegi symbols for system and history packages
-generate:
-	@echo "--- Generating yaegi symbols ---"
-	@yaegi github.com/sannysanoff/mcphost/pkg/system github.com/sannysanoff/mcphost/pkg/history
-	@echo "Generated github_com-sannysanoff-mcphost-pkg-system.go and github_com-sannysanoff-mcphost-pkg-history.go"
+# Generated files
+GENERATED := github_com-sannysanoff-mcphost-pkg-system.go github_com-sannysanoff-mcphost-pkg-history.go
+
+# Source files to track
+SYSTEM_SRC := $(shell find pkg/system -type f -name '*.go')
+HISTORY_SRC := $(shell find pkg/history -type f -name '*.go')
+
+# Generate yaegi symbols only when sources change
+github_com-sannysanoff-mcphost-pkg-system.go: $(SYSTEM_SRC)
+	@echo "--- Generating system symbols ---"
+	@yaegi github.com/sannysanoff/mcphost/pkg/system
+	@touch $@
+
+github_com-sannysanoff-mcphost-pkg-history.go: $(HISTORY_SRC)
+	@echo "--- Generating history symbols ---"
+	@yaegi github.com/sannysanoff/mcphost/pkg/history
+	@touch $@
+
+generate: $(GENERATED)
 
 # Builds the application. Depends on 'generate' to ensure symbols are created first.
 build: generate
@@ -19,12 +33,10 @@ build: generate
 	@go build -o $(TARGET_NAME) $(CMD_PATH)
 	@echo "Build complete: $(TARGET_NAME)"
 
-# Removes the built binary.
+# Removes the built binary and generated files.
 clean:
 	@echo "--- Cleaning ---"
-	@rm -f $(TARGET_NAME)
-	# Add commands here to clean generated files if they are not in .gitignore
-	# For example: @find . -name 'yaegi_symbols_*.go' -delete
+	@rm -f $(TARGET_NAME) $(GENERATED)
 
 # Run tests
 test:
