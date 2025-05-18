@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/history"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,10 +22,10 @@ import (
 type Agent interface {
 	// GetSystemPrompt returns the agent's default system prompt
 	GetSystemPrompt() string
-	
+
 	// NormalizeHistory processes and normalizes message history
 	NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage
-	
+
 	// Filename returns the source file name of this agent
 	Filename() string
 }
@@ -37,14 +38,14 @@ type yaegiAgent struct {
 func (a *yaegiAgent) GetSystemPrompt() string {
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
 	promptFuncName := makePascalCase(baseName) + "GetPrompt"
-	
+
 	evalStr := fmt.Sprintf("agents.%s()", promptFuncName)
 	val, err := a.interpreter.Eval(evalStr)
 	if err != nil {
 		log.Error("Failed to call prompt function", "agent", a.filename, "func", promptFuncName, "error", err)
 		return ""
 	}
-	
+
 	if val.Kind() == reflect.String {
 		return val.String()
 	}
@@ -54,14 +55,14 @@ func (a *yaegiAgent) GetSystemPrompt() string {
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
 	normalizeFuncName := makePascalCase(baseName) + "NormalizeHistory"
-	
+
 	evalStr := fmt.Sprintf("agents.%s(%#v)", normalizeFuncName, messages)
 	val, err := a.interpreter.Eval(evalStr)
 	if err != nil {
 		log.Error("Failed to call normalize function", "agent", a.filename, "func", normalizeFuncName, "error", err)
 		return messages
 	}
-	
+
 	if val.IsValid() && val.CanInterface() {
 		if result, ok := val.Interface().([]history.HistoryMessage); ok {
 			return result
@@ -142,7 +143,7 @@ func HandleListAgents(w http.ResponseWriter, r *http.Request) {
 		Name          string `json:"name"`
 		DefaultPrompt string `json:"default_prompt"`
 	}
-	
+
 	var response []agentInfo
 	for _, agent := range agents {
 		response = append(response, agentInfo{
