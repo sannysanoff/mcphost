@@ -165,14 +165,36 @@ func TestMainEntryPoint(t *testing.T) {
 				Name:        "web_search",
 				Description: "Web search tool",
 				InputSchema: mcp.ToolInputSchema{
-					Type:       "",
-					Properties: nil,
-					Required:   nil,
+					Type: "object",
+					Properties: map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "The search query",
+						},
+						"count": map[string]interface{}{
+							"type":        "number",
+							"description": "Number of results to return",
+							"minimum":     1,
+							"maximum":     10,
+						},
+					},
+					Required: []string{"query"},
 				},
 			},
 			{
 				Name:        "web_fetch",
 				Description: "Web fetch tool",
+				InputSchema: mcp.ToolInputSchema{
+					Type: "object",
+					Properties: map[string]interface{}{
+						"url": map[string]interface{}{
+							"type":        "string",
+							"description": "The URL to fetch",
+							"format":      "uri",
+						},
+					},
+					Required: []string{"url"},
+				},
 			},
 		},
 	}
