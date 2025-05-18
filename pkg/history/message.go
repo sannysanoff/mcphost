@@ -112,6 +112,19 @@ type ContentBlock struct {
 	Content   interface{}     `json:"content,omitempty" yaml:"content,omitempty"`         // Used for tool_result block, can be string or []ContentBlock
 }
 
+// NewAssistantResponse creates a new assistant message with simple text content
+func NewAssistantResponse(text string) *HistoryMessage {
+	return &HistoryMessage{
+		Role: "assistant",
+		Content: []ContentBlock{
+			{
+				Type: "text",
+				Text: text,
+			},
+		},
+	}
+}
+
 // NewToolCallMessage creates a new assistant message with a tool call request
 func NewToolCallMessage(toolName string, args map[string]interface{}) *HistoryMessage {
 	argsJSON, err := json.Marshal(args)
