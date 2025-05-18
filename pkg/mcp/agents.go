@@ -71,16 +71,27 @@ func (a *yaegiAgent) checkAndReload() error {
 	return nil
 }
 
-// callStringMethod calls a method on the agent that is expected to return a string.
-// If the method doesn't exist, an error occurs, or it doesn't return a string, defaultValue is returned.
-func (a *yaegiAgent) callStringMethod(methodSuffix string, defaultValue string) string {
+// prepareAgentCall handles the common logic of checking/reloading an agent
+// and constructing the function name to be called.
+func (a *yaegiAgent) prepareAgentCall(methodSuffix string, errorContext string) (string, error) {
 	if err := a.checkAndReload(); err != nil {
-		log.Error("Failed to check/reload agent", "agent", a.filename, "method_suffix", methodSuffix, "error", err)
-		return defaultValue
+		log.Error("Failed to check/reload agent for "+errorContext, "agent", a.filename, "method_suffix", methodSuffix, "error", err)
+		return "", err
 	}
 
 	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
 	funcName := makePascalCase(baseName) + methodSuffix
+	return funcName, nil
+}
+
+// callStringMethod calls a method on the agent that is expected to return a string.
+// If the method doesn't exist, an error occurs, or it doesn't return a string, defaultValue is returned.
+func (a *yaegiAgent) callStringMethod(methodSuffix string, defaultValue string) string {
+	funcName, err := a.prepareAgentCall(methodSuffix, "string method '"+methodSuffix+"'")
+	if err != nil {
+		// Error already logged by prepareAgentCall
+		return defaultValue
+	}
 
 	evalStr := fmt.Sprintf("agents.%s()", funcName)
 	val, err := a.interpreter.Eval(evalStr)
@@ -102,23 +113,23 @@ func (a *yaegiAgent) callStringMethod(methodSuffix string, defaultValue string) 
 	return defaultValue
 }
 
-// callNormalizeHistoryMethod calls the NormalizeHistory method on the agent.
+// GetSystemPrompt calls the GetPrompt method on the agent.
 func (a *yaegiAgent) GetSystemPrompt() string {
 	return a.callStringMethod("GetPrompt", "")
 }
 
+// GetTaskForModelSelection calls the GetTaskForModelSelection method on the agent.
 func (a *yaegiAgent) GetTaskForModelSelection() string {
 	return a.callStringMethod("GetTaskForModelSelection", "default")
 }
 
+// NormalizeHistory calls the NormalizeHistory method on the agent.
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
-	if err := a.checkAndReload(); err != nil {
-		log.Error("Failed to check/reload agent for NormalizeHistory", "agent", a.filename, "error", err)
+	normalizeFuncName, err := a.prepareAgentCall("NormalizeHistory", "NormalizeHistory")
+	if err != nil {
+		// Error already logged by prepareAgentCall
 		return messages
 	}
-
-	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
-	normalizeFuncName := makePascalCase(baseName) + "NormalizeHistory"
 
 	evalStr := fmt.Sprintf("agents.%s(%#v)", normalizeFuncName, messages)
 	val, err := a.interpreter.Eval(evalStr)
