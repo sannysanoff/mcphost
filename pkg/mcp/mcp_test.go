@@ -2,14 +2,13 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/sannysanoff/mcphost/pkg/history"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/stretchr/testify/require"
 )
 
 type mockMCPClient struct {
@@ -69,11 +68,6 @@ func (m *mockMCPClient) ListPrompts(ctx context.Context, request mcp.ListPrompts
 }
 
 func (m *mockMCPClient) GetPrompt(ctx context.Context, request mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
-	for _, p := range m.prompts {
-		if p.Name == request.Params.Name {
-			return &mcp.GetPromptResult{Prompt: p}, nil
-		}
-	}
 	return nil, fmt.Errorf("prompt not found")
 }
 
@@ -94,7 +88,7 @@ func (m *mockMCPClient) CallTool(ctx context.Context, request mcp.CallToolReques
 		}
 		m.lastCall = time.Now()
 	}
-	
+
 	for _, t := range m.tools {
 		if t.Name == request.Params.Name {
 			return &mcp.CallToolResult{
