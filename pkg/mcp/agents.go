@@ -125,6 +125,9 @@ func (a *yaegiAgent) GetTaskForModelSelection() string {
 
 // NormalizeHistory calls the NormalizeHistory method on the agent.
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+	if messages == nil || len(messages) == 0 {
+		return messages
+	}
 	normalizeFuncName, err := a.prepareAgentCall("NormalizeHistory", "NormalizeHistory")
 	if err != nil {
 		// Error already logged by prepareAgentCall
@@ -137,8 +140,6 @@ func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []histo
 	if err != nil {
 		if !strings.Contains(err.Error(), "undefined") && !strings.Contains(err.Error(), "not found") {
 			log.Error("Failed to call NormalizeHistory function", "agent", a.filename, "func", normalizeFuncName, "error", err)
-		} else {
-			log.Debug("NormalizeHistory function not found or call failed, returning original messages", "agent", a.filename, "func", normalizeFuncName, "error_detail", err.Error())
 		}
 		return messages
 	}
@@ -296,7 +297,6 @@ func DefaultGetTaskForModelSelection() string {
 	} else if err != nil {
 		return nil, fmt.Errorf("error checking agent file '%s': %w", agentFilePath, err)
 	}
-
 
 	return loadAgentFromFile(agentFilePath)
 }
