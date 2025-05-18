@@ -45,7 +45,7 @@ var (
 	// systemPromptFile string // Removed
 	messageWindow    int
 	agentNameFlag    string // Agent name (e.g., "default")
-	tracesDir        string // Directory for trace files
+	TracesDir        string // Directory for trace files
 	modelsConfigFile string // Path to models.yaml
 
 	loadedModelsConfig *ModelsConfig // Parsed models.yaml
@@ -1047,7 +1047,6 @@ func runServerMode(ctx context.Context, modelsCfg *ModelsConfig) error {
 	return nil
 }
 
-// handleStartJob now accepts mcpClients and allTools to pass to processJob
 func handleStartJob(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1128,14 +1127,11 @@ func handleStartJob(
 		return
 	}
 
-	jobID := generateTraceID()
-	currentJobID = jobID
 	jobCtx, jobCancel := context.WithCancel(context.Background())
 	currentJobCtx = jobCtx
 	currentJobCancel = jobCancel
 
-	traceFilePath := filepath.Join(tracesDir, fmt.Sprintf("%s.yaml", jobID))
-	jobTweaker := NewDefaultPromptRuntimeTweaks(traceFilePath)
+	jobTweaker := NewDefaultPromptRuntimeTweaks()
 
 	// Construct initial message from user_query
 	initialUserMessage := history.HistoryMessage{
@@ -1256,8 +1252,6 @@ func handleStopJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// processJob is the goroutine that handles a single LLM interaction task.
-// It now accepts modelToUse and systemPromptToUse for job-specific configuration.
 func processJob(jobCtx context.Context, jobID string, modelToUse string, agent Agent, systemPromptToUse string, messages []history.HistoryMessage, tweaker PromptRuntimeTweaks, mcpClients map[string]mcpclient.MCPClient, allTools []history.Tool, modelsCfg *ModelsConfig) {
 	defer func() {
 		jobMutex.Lock()
@@ -1368,11 +1362,11 @@ func MakeMockProvider() *testing_stuff.MockProvider {
 	return &testing_stuff.MockProvider{TheName: "mock", Responses: map[string]history.Message{}}
 }
 
-func RunSubAgent(agentName string, prompt string) (string, error) {
+func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	// Load the agent specified by agentNameFlag
 	agent, err := LoadAgentByName(agentName) // Assuming LoadAgentByName resolves "default" etc.
 	if err != nil {
-		return "", fmt.Errorf("error loading agent '%s': %w", agentName, err)
+		return "", "", fmt.Errorf("error loading agent '%s': %w", agentName, err)
 	}
 	taskForModelSelection := agent.GetTaskForModelSelection()
 
@@ -1381,7 +1375,7 @@ func RunSubAgent(agentName string, prompt string) (string, error) {
 	// Select model based on task
 	selectedModelID, err := selectModelForTask(taskForModelSelection, loadedModelsConfig)
 	if err != nil {
-		return "", fmt.Errorf("error selecting model for task '%s' (agent '%s'): %w", taskForModelSelection, agentName, err)
+		return "", "", fmt.Errorf("error selecting model for task '%s' (agent '%s'): %w", taskForModelSelection, agentName, err)
 	}
 
 	// Create the provider using the selected model ID
@@ -1389,7 +1383,7 @@ func RunSubAgent(agentName string, prompt string) (string, error) {
 	provider, err := createProvider(ctx, selectedModelID, agent.GetSystemPrompt(), loadedModelsConfig)
 	if err != nil {
 		// Error from createProvider already includes modelID.
-		return "", fmt.Errorf("error creating provider (agent '%s', task '%s'): %w", agentName, taskForModelSelection, err)
+		return "", "", fmt.Errorf("error creating provider (agent '%s', task '%s'): %w", agentName, taskForModelSelection, err)
 	}
 
 	// runPrompt with isInteractive=false will use logging for output.
@@ -1398,7 +1392,7 @@ func RunSubAgent(agentName string, prompt string) (string, error) {
 	if err != nil {
 		// Error is already logged by runPrompt or its callees.
 		// Return the error to indicate failure to the main Execute function.
-		return "", fmt.Errorf("error processing non-interactive prompt: %w", err)
+		return "", "", fmt.Errorf("error processing non-interactive prompt: %w", err)
 	}
 
 	// Print the assistant's final textual response to stdout.
@@ -1414,9 +1408,9 @@ func RunSubAgent(agentName string, prompt string) (string, error) {
 	}
 
 	if lastAssistantText != "" {
-		return lastAssistantText, nil
+		return lastAssistantText, "", nil
 	} else {
-		return "", fmt.Errorf("No final text response from assistant to print for non-interactive mode.")
+		return "", "", fmt.Errorf("No final text response from assistant to print for non-interactive mode.")
 	}
 
 }
