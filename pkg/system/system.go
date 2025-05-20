@@ -4,14 +4,26 @@ import (
 	"github.com/sannysanoff/mcphost/pkg/history"
 )
 
+// Agent represents a loaded agent with its interpreter and methods
+type Agent interface {
+	// GetSystemPrompt returns the agent's default system prompt
+	GetSystemPrompt() string
+
+	// NormalizeHistory processes and normalizes message history
+	NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage
+
+	// Filename returns the source file name of this agent
+	Filename() string
+
+	GetTaskForModelSelection() string
+}
+
 func NativeFunction(a string) string {
 	return a + "X"
 }
 
 type AgentImplementation struct {
-	AgentData               any
-	GetPrompt               func() string
-	DefaultNormalizeHistory func(messages []history.HistoryMessage) []history.HistoryMessage
+	AgentData any
 }
 
 type AgentImplementationBase struct {
@@ -75,4 +87,10 @@ func IsModelAnswerAny(message history.HistoryMessage) bool {
 	} else {
 		return false
 	}
+}
+
+var AllAgents = map[string]func() Agent{}
+
+func RegisterAgent(agentName string, constructor func() Agent) {
+	AllAgents[agentName] = constructor
 }
