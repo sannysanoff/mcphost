@@ -16,6 +16,7 @@ type Agent interface {
 	Filename() string
 
 	GetTaskForModelSelection() string
+
 }
 
 func NativeFunction(a string) string {
@@ -28,6 +29,9 @@ type AgentImplementation struct {
 
 type AgentImplementationBase struct {
 	filename string
+
+	coAgents map(string)[]history.HistoryMessage
+
 }
 
 // GetSystemPrompt returns a default system prompt.
