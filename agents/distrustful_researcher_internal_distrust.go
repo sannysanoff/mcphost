@@ -2,11 +2,22 @@ package agents
 
 import (
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/system"
 	"time"
 )
 
-//goland:noinspection GoUnusedExportedFunction
-func DistrustfulResearcherInternalDistrustGetPrompt() string {
+// DistrustfulResearcherInternalDistrustAgent defines the agent structure.
+type DistrustfulResearcherInternalDistrustAgent struct {
+	system.AgentImplementationBase
+}
+
+// DistrustfulResearcherInternalDistrustNew creates a new DistrustfulResearcherInternalDistrustAgent.
+func DistrustfulResearcherInternalDistrustNew() *DistrustfulResearcherInternalDistrustAgent {
+	return &DistrustfulResearcherInternalDistrustAgent{system.AgentImplementationBase{}}
+}
+
+// GetSystemPrompt returns the system prompt for the DistrustfulResearcherInternalDistrustAgent.
+func (a *DistrustfulResearcherInternalDistrustAgent) GetSystemPrompt() string {
 	return fmt.Sprintf(`
 You are distrustful researcher assistant. 
 You're being given research goal, and research result,
@@ -29,4 +40,14 @@ assistant output: I insist she did smile, please research further
 Today is: %s ." 
 
 `, fmt.Sprintf("%v", time.Now()))
+}
+
+// DistrustfulResearcherInternalDistrustImplementation returns the system.AgentImplementation for this agent.
+func DistrustfulResearcherInternalDistrustImplementation() system.AgentImplementation {
+	agent := DistrustfulResearcherInternalDistrustNew()
+	return system.AgentImplementation{
+		AgentData:               nil,
+		GetPrompt:               agent.GetSystemPrompt,
+		DefaultNormalizeHistory: agent.NormalizeHistory, // Inherited from AgentImplementationBase
+	}
 }

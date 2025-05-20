@@ -2,11 +2,22 @@ package agents
 
 import (
 	"fmt"
+	"github.com/sannysanoff/mcphost/pkg/system"
 	"time"
 )
 
-//goland:noinspection GoUnusedExportedFunction
-func DistrustfulResearcherInternalGroundMergeGetPrompt() string {
+// DistrustfulResearcherInternalGroundMergeAgent defines the agent structure.
+type DistrustfulResearcherInternalGroundMergeAgent struct {
+	system.AgentImplementationBase
+}
+
+// DistrustfulResearcherInternalGroundMergeNew creates a new DistrustfulResearcherInternalGroundMergeAgent.
+func DistrustfulResearcherInternalGroundMergeNew() *DistrustfulResearcherInternalGroundMergeAgent {
+	return &DistrustfulResearcherInternalGroundMergeAgent{system.AgentImplementationBase{}}
+}
+
+// GetSystemPrompt returns the system prompt for the DistrustfulResearcherInternalGroundMergeAgent.
+func (a *DistrustfulResearcherInternalGroundMergeAgent) GetSystemPrompt() string {
 	return fmt.Sprintf(`
 You are balanced research reviewer. There are two research results.
 One is done quickly, and incomplete.
@@ -36,4 +47,14 @@ assistant output:in fact, morra did smile  when she got hobgobiln's magic hat, i
 Today is: %s ." 
 
 `, fmt.Sprintf("%v", time.Now()))
+}
+
+// DistrustfulResearcherInternalGroundMergeImplementation returns the system.AgentImplementation for this agent.
+func DistrustfulResearcherInternalGroundMergeImplementation() system.AgentImplementation {
+	agent := DistrustfulResearcherInternalGroundMergeNew()
+	return system.AgentImplementation{
+		AgentData:               nil,
+		GetPrompt:               agent.GetSystemPrompt,
+		DefaultNormalizeHistory: agent.NormalizeHistory, // Inherited from AgentImplementationBase
+	}
 }
