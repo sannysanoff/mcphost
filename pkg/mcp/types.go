@@ -27,14 +27,19 @@ var PromptRuntimeTweaksKey = PromptRuntimeTweaksKeyType{}
 type DefaultPromptRuntimeTweaks struct {
 	traceFilePath string
 	nextHistoryID int
+	JobId         string
 }
 
 // NewDefaultPromptRuntimeTweaks creates a new instance of DefaultPromptRuntimeTweaks.
 // traceFilePath can be empty if tracing is disabled.
-func NewDefaultPromptRuntimeTweaks(traceFilePath string) *DefaultPromptRuntimeTweaks {
+func NewDefaultPromptRuntimeTweaks(suffix string) *DefaultPromptRuntimeTweaks {
+	jobID := generateTraceID(suffix)
+	currentJobID = jobID
+	traceFilePath := filepath.Join(TracesDir, fmt.Sprintf("%s.yaml", jobID))
 	return &DefaultPromptRuntimeTweaks{
 		traceFilePath: traceFilePath,
 		nextHistoryID: 1, // Start IDs from 1
+		JobId:         jobID,
 	}
 }
 

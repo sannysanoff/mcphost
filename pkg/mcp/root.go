@@ -183,7 +183,7 @@ func init() {
 
 	// Caching flag
 	rootCmd.PersistentFlags().
-		BoolVar(&enableCaching, "enable-caching", true, "enable LLM and tool call caching")
+		BoolVar(&enableCaching, "enable-caching", false, "enable LLM and tool call caching")
 }
 
 // createProvider initializes an LLM provider based on the model ID and models configuration.
@@ -613,7 +613,7 @@ func callToolWithCache(
 }
 
 // Method implementations for simpleMessage
-func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, prompt *history.HistoryMessage, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) error {
+func runPrompt(ctx context.Context, provider history.Provider, agent system.Agent, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, prompt *history.HistoryMessage, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) error {
 	// Display the user's prompt if it's not empty and in interactive mode
 	if prompt != nil && isInteractive {
 		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt.GetContent()))
@@ -1509,7 +1509,7 @@ func handleStopJob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func processJob(jobCtx context.Context, jobID string, modelToUse string, agent Agent, systemPromptToUse string, messages []history.HistoryMessage, tweaker PromptRuntimeTweaks, mcpClients map[string]mcpclient.MCPClient, allTools []history.Tool, modelsCfg *ModelsConfig) {
+func processJob(jobCtx context.Context, jobID string, modelToUse string, agent system.Agent, systemPromptToUse string, messages []history.HistoryMessage, tweaker PromptRuntimeTweaks, mcpClients map[string]mcpclient.MCPClient, allTools []history.Tool, modelsCfg *ModelsConfig) {
 	defer func() {
 		jobMutex.Lock()
 		if currentJobID == jobID { // Ensure this job is still the one to clear
