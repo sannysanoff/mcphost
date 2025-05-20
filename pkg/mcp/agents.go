@@ -52,70 +52,79 @@ func makePascalCase(name string) string {
 	return strings.Join(parts, "")
 }
 
-// ensureImplementationReady checks if the agent script has been modified, reloads it if necessary,
-// and ensures that a.implementation is populated by calling 'agents.GetImplementation()' from the script.
+// ensureImplementationReady checks if the agent script needs to be (re-)evaluated and
+// if the agent implementation object needs to be (re-)loaded.
+// It handles initial loading and reloading upon file modification.
+// Agent scripts are expected to define a "PascalCaseAgentNameNew() *system.AgentImplementationBase" function.
 func (a *yaegiAgent) ensureImplementationReady() error {
 	now := time.Now().Unix()
-	needsLoadImplementation := a.implementation == nil // Load if never loaded
+	isInitialLoad := a.implementation == nil
+	scriptNeedsReEval := false
+	var newModTimeIfReEval time.Time
 
 	// Check for file modification at most once per second.
-	// The lastCheck field is updated regardless of whether a file stat occurs.
 	if now-a.lastCheck >= 1 {
 		a.lastCheck = now
 		info, err := os.Stat(a.fullPath)
 		if err != nil {
-			// If stat fails, we can't determine if reload is needed, so error out.
-			// This also prevents hammering Stat on a missing file.
-			a.implementation = nil // Invalidate current implementation if file is inaccessible
+			a.implementation = nil // Invalidate
 			return fmt.Errorf("failed to stat agent file %s: %w", a.fullPath, err)
 		}
-
 		if info.ModTime().After(a.lastModTime) {
-			log.Info("Agent file changed, reloading.", "agent", a.filename, "path", a.fullPath)
-			content, err := os.ReadFile(a.fullPath)
-			if err != nil {
-				a.implementation = nil // Invalidate on read error
-				return fmt.Errorf("failed to read agent file %s: %w", a.fullPath, err)
-			}
-
-			// Re-evaluate the script. This might redefine symbols in the interpreter.
-			_, err = a.interpreter.Eval(string(content))
-			if err != nil {
-				a.implementation = nil // Invalidate on eval error
-				return fmt.Errorf("failed to re-evaluate agent code for %s: %w", a.filename, err)
-			}
-			a.lastModTime = info.ModTime()
-			needsLoadImplementation = true // Force reload of implementation after script re-evaluation
-			log.Debug("Agent script re-evaluated successfully.", "agent", a.filename)
+			log.Info("Agent file changed, scheduling re-evaluation.", "agent", a.filename, "oldModTime", a.lastModTime, "newModTime", info.ModTime())
+			scriptNeedsReEval = true
+			newModTimeIfReEval = info.ModTime()
 		}
 	}
 
-	if needsLoadImplementation {
-		log.Debug("Attempting to load/reload agent implementation from script.", "agent", a.filename)
-		// Attempt to get the agent implementation from the script.
-		// Assumes agent scripts define "agents.GetImplementation() (*system.AgentImplementationBase)".
-		baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
-		val, err := a.interpreter.Eval(makePascalCase(baseName) + "New()")
+	// If it's an initial load or script needs re-evaluation, evaluate the script content.
+	if isInitialLoad || scriptNeedsReEval {
+		log.Debug("Evaluating agent script content.", "agent", a.filename, "initial", isInitialLoad, "reEval", scriptNeedsReEval)
+		content, err := os.ReadFile(a.fullPath)
 		if err != nil {
-			a.implementation = nil // Ensure implementation is nil if fetching fails
-			return fmt.Errorf("failed to call GetImplementation in agent script %s: %w. Ensure GetImplementation exists and returns *system.AgentImplementationBase.", a.filename, err)
+			a.implementation = nil // Invalidate
+			return fmt.Errorf("failed to read agent file %s for evaluation: %w", a.fullPath, err)
+		}
+
+		_, err = a.interpreter.Eval(string(content))
+		if err != nil {
+			a.implementation = nil // Invalidate
+			return fmt.Errorf("failed to evaluate agent script %s: %w", a.filename, err)
+		}
+
+		if scriptNeedsReEval {
+			a.lastModTime = newModTimeIfReEval // Update modTime after successful re-evaluation
+		}
+		// For initialLoad, lastModTime was set by the caller (loadAgentFromFile).
+		log.Debug("Agent script content evaluated successfully.", "agent", a.filename)
+	}
+
+	// If implementation is nil (initial load) or script was re-evaluated, then (re)load the implementation object.
+	if isInitialLoad || scriptNeedsReEval {
+		log.Debug("Attempting to load/reload agent implementation object.", "agent", a.filename)
+		agentBaseName := strings.TrimSuffix(filepath.Base(a.filename), ".go")
+		constructorName := makePascalCase(agentBaseName) + "New"
+
+		val, err := a.interpreter.Eval(constructorName + "()")
+		if err != nil {
+			a.implementation = nil
+			return fmt.Errorf("failed to call %s in agent script %s: %w. Ensure %s exists and returns *system.AgentImplementationBase.", constructorName, a.filename, err, constructorName)
 		}
 
 		impl, ok := val.Interface().(*system.AgentImplementationBase)
 		if !ok {
 			a.implementation = nil
-			return fmt.Errorf("GetImplementation in agent script %s did not return *system.AgentImplementationBase, got %T", a.filename, val.Interface())
+			return fmt.Errorf("%s in agent script %s did not return *system.AgentImplementationBase, got %T", constructorName, a.filename, val.Interface())
 		}
 		if impl == nil {
 			a.implementation = nil
-			return fmt.Errorf("GetImplementation in agent script %s returned nil", a.filename)
+			return fmt.Errorf("%s in agent script %s returned nil", constructorName, a.filename)
 		}
 		a.implementation = impl
-		log.Info("Agent implementation loaded/reloaded successfully.", "agent", a.filename)
+		log.Info("Agent implementation object loaded/reloaded successfully.", "agent", a.filename)
 	} else if a.implementation == nil {
-		// This case should ideally not be reached if logic is correct,
-		// but as a safeguard: if not needing load, but impl is nil, something is wrong.
-		return fmt.Errorf("internal error: agent implementation is nil for %s without needing load", a.filename)
+		// This case should ideally not be reached if logic is correct.
+		return fmt.Errorf("internal error: agent implementation is nil for %s despite no load/re-eval trigger", a.filename)
 	}
 	return nil
 }
@@ -161,47 +170,31 @@ func loadAgentFromFile(agentFilePath string) (Agent, error) {
 	i.Use(stdlib.Symbols)
 	i.Use(systemsymbols.Symbols)
 
-	agentFileContent, err := os.ReadFile(agentFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read agent file %s: %w", agentFilePath, err)
-	}
-
-	// Get file info for mod time
+	// Get file info for initial mod time
 	info, err := os.Stat(agentFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat agent file %s: %w", agentFilePath, err)
 	}
 
-	// Evaluate the agent's Go code
-	_, err = i.Eval(string(agentFileContent))
-	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate agent code for %s: %w", agentFilePath, err)
-	}
-
-	// Get the implementation from the script
-	val, err := i.Eval("agents.GetImplementation()")
-	if err != nil {
-		return nil, fmt.Errorf("failed to call GetImplementation in agent script %s after initial load: %w. Ensure GetImplementation exists and returns *system.AgentImplementationBase.", agentFilePath, err)
-	}
-
-	impl, ok := val.Interface().(*system.AgentImplementationBase)
-	if !ok {
-		return nil, fmt.Errorf("GetImplementation in agent script %s did not return *system.AgentImplementationBase on initial load, got %T", agentFilePath, val.Interface())
-	}
-	if impl == nil {
-		return nil, fmt.Errorf("GetImplementation in agent script %s returned nil on initial load", agentFilePath)
-	}
-
-	log.Info("Agent script evaluated and implementation loaded successfully", "file", agentFilePath)
-
-	return &yaegiAgent{
+	agent := &yaegiAgent{
 		filename:       filepath.Base(agentFilePath),
 		fullPath:       agentFilePath,
 		interpreter:    i,
-		lastCheck:      time.Now().Unix(), // Initialize lastCheck to current time
-		lastModTime:    info.ModTime(),
-		implementation: impl,
-	}, nil
+		lastCheck:      time.Now().Unix(), // Initialize lastCheck
+		lastModTime:    info.ModTime(),    // Set initial modTime
+		implementation: nil,               // Implementation starts as nil, to be loaded by ensureImplementationReady
+	}
+
+	// ensureImplementationReady will handle the initial script evaluation and implementation loading
+	if err := agent.ensureImplementationReady(); err != nil {
+		// Error is already formatted by ensureImplementationReady or one of its callees
+		return nil, err
+	}
+
+	// Log success after ensureImplementationReady has done its work.
+	// Specifics of what was done (initial load vs reload) are logged within ensureImplementationReady.
+	log.Info("Agent loaded successfully", "file", agentFilePath)
+	return agent, nil
 }
 
 // HandleListAgents discovers agents in the 'agents' directory and returns their default prompts.
@@ -275,9 +268,10 @@ func LoadAgentByName(agentName string) (Agent, error) {
 import "github.com/sannysanoff/mcphost/pkg/system"
 import "github.com/sannysanoff/mcphost/pkg/history"
 
-// GetImplementation provides the agent's core logic and configuration.
-// This function is called by MCPHost to obtain the agent's behavior.
-func GetImplementation() *system.AgentImplementationBase {
+// DefaultNew provides the agent's core logic and configuration.
+// This function is called by MCPHost to obtain the agent's behavior for the "default" agent.
+// Replace "DefaultNew" with "YourAgentNameNew" for other agent files, matching the file name.
+func DefaultNew() *system.AgentImplementationBase {
 	return &system.AgentImplementationBase{
 		SystemPrompt: "You are a helpful assistant.",
 		TaskForModel: "general_assistance",
@@ -292,7 +286,12 @@ func GetImplementation() *system.AgentImplementationBase {
 	}
 }
 `
-			if errWrite := os.WriteFile(agentFilePath, []byte(defaultContent), 0644); errWrite != nil {
+			// Determine the correct constructor name based on the agentName
+			pascalAgentName := makePascalCase(agentName)
+			constructorFunc := pascalAgentName + "New"
+			finalDefaultContent := strings.Replace(defaultContent, "DefaultNew", constructorFunc, 1)
+
+			if errWrite := os.WriteFile(agentFilePath, []byte(finalDefaultContent), 0644); errWrite != nil {
 				return nil, fmt.Errorf("failed to create default agent file '%s': %w", agentFilePath, errWrite)
 			}
 			log.Info("Successfully created default agent file.", "path", agentFilePath)
