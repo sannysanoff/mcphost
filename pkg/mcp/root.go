@@ -559,9 +559,6 @@ func callToolWithCache(
 		log.Debug("Caching is disabled, calling tool directly.", "tool", fullToolName)
 		return performActualToolCall(ctx, mcpClient, fullToolName, toolArgsJSON, rateLimit, isInteractive, simpleToolNameForDisplay)
 	}
-	if len(partsForDisplay) == 2 {
-		simpleToolNameForDisplay = partsForDisplay[1]
-	}
 
 	cacheKey, err := generateToolCallCacheKey(precedingMessagesHash, fullToolName, toolArgsJSON)
 	if err != nil {
