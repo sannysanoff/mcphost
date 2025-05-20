@@ -18,11 +18,15 @@ type AgentImplementationBase struct {
 	filename string
 }
 
-func (e *AgentImplementationBase) GetPrompt() string {
+// GetSystemPrompt returns a default system prompt.
+// Specific agents can override this.
+func (e *AgentImplementationBase) GetSystemPrompt() string {
 	return "You are helpful assistant"
 }
 
-func (e *AgentImplementationBase) DefaultNormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+// NormalizeHistory provides a default behavior for normalizing messages.
+// Specific agents can override this.
+func (e *AgentImplementationBase) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
 	return messages
 }
 
