@@ -615,32 +615,11 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 	}
 
 	// Calculate hash of this history, this is the context for the upcoming LLM call, used for tool caching.
-	llmCallHistoryHashForToolCache := "" // Default to empty if error or no history
-	if len(llmMessages) > 0 {
-		var hashErr error
-		llmCallHistoryHashForToolCache, hashErr = hashHistoryMessages(llmMessages)
-		if hashErr != nil {
-			log.Warn("Failed to hash llmMessages for tool caching, tool cache might be less effective or fail.", "error", hashErr)
-			llmCallHistoryHashForToolCache = "error_hashing_history" // Use a distinct string on error to avoid empty string collisions
-		}
-	} else {
-		llmCallHistoryHashForToolCache = "empty_history" // Distinct string for empty history
-	}
+	llmCallHistoryHashForToolCache := GetHistoryCache(llmMessages)
 
 	log.Debug("Using provided PromptRuntimeTweaks for tool filtering and tracing")
 
-	var effectiveTools []history.Tool
-	if tweaker != nil { // tweaker might be nil if tracing is disabled (though NewDefaultPromptRuntimeTweaks("") handles it)
-		for _, tool := range tools {
-			// Ensure to use GetName() method from the llm.Tool interface
-			if tweaker.IsToolEnabled(tool.Name) {
-				effectiveTools = append(effectiveTools, tool)
-			}
-		}
-	} else {
-		// If tweaker is nil (should not happen with NewDefaultPromptRuntimeTweaks), use all tools
-		effectiveTools = tools
-	}
+	var effectiveTools []history.Tool = FilterToolsWithTweaker(tweaker, tools, nil)
 
 	for {
 		action := func() {
@@ -935,6 +914,36 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 		fmt.Println() // Add spacing
 	}
 	return nil
+}
+
+func FilterToolsWithTweaker(tweaker PromptRuntimeTweaks, tools []history.Tool, effectiveTools []history.Tool) []history.Tool {
+	if tweaker != nil { // tweaker might be nil if tracing is disabled (though NewDefaultPromptRuntimeTweaks("") handles it)
+		for _, tool := range tools {
+			// Ensure to use GetName() method from the llm.Tool interface
+			if tweaker.IsToolEnabled(tool.Name) {
+				effectiveTools = append(effectiveTools, tool)
+			}
+		}
+	} else {
+		// If tweaker is nil (should not happen with NewDefaultPromptRuntimeTweaks), use all tools
+		effectiveTools = tools
+	}
+	return effectiveTools
+}
+
+func GetHistoryCache(llmMessages []history.Message) string {
+	llmCallHistoryHashForToolCache := "" // Default to empty if error or no history
+	if len(llmMessages) > 0 {
+		var hashErr error
+		llmCallHistoryHashForToolCache, hashErr = hashHistoryMessages(llmMessages)
+		if hashErr != nil {
+			log.Warn("Failed to hash llmMessages for tool caching, tool cache might be less effective or fail.", "error", hashErr)
+			llmCallHistoryHashForToolCache = "error_hashing_history" // Use a distinct string on error to avoid empty string collisions
+		}
+	} else {
+		llmCallHistoryHashForToolCache = "empty_history" // Distinct string for empty history
+	}
+	return llmCallHistoryHashForToolCache
 }
 
 func generateTraceID(fileSuffix string) string {
