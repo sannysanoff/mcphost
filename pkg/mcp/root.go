@@ -93,16 +93,16 @@ Server Mode:
   curl http://localhost:9262/agents`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Validate --traces flag early, as it's required for both modes
-		if tracesDir == "" {
+		if TracesDir == "" {
 			return fmt.Errorf("--traces flag is required")
 		}
-		if _, err := os.Stat(tracesDir); os.IsNotExist(err) {
-			if err := os.MkdirAll(tracesDir, 0755); err != nil {
-				return fmt.Errorf("traces directory does not exist and could not be created: %s, error: %w", tracesDir, err)
+		if _, err := os.Stat(TracesDir); os.IsNotExist(err) {
+			if err := os.MkdirAll(TracesDir, 0755); err != nil {
+				return fmt.Errorf("traces directory does not exist and could not be created: %s, error: %w", TracesDir, err)
 			}
-			log.Info("Created traces directory", "path", tracesDir)
+			log.Info("Created traces directory", "path", TracesDir)
 		} else if err != nil {
-			return fmt.Errorf("error checking traces directory %s: %w", tracesDir, err)
+			return fmt.Errorf("error checking traces directory %s: %w", TracesDir, err)
 		}
 
 		// Set up logging based on debug flag
@@ -168,7 +168,7 @@ func init() {
 	rootCmd.PersistentFlags().
 		BoolVar(&debugMode, "debug", false, "enable debug logging")
 	rootCmd.PersistentFlags().
-		StringVar(&tracesDir, "traces", "./traces", "directory to store trace files (required)")
+		StringVar(&TracesDir, "traces", "./traces", "directory to store trace files (required)")
 
 	// Server mode flags
 	rootCmd.Flags().BoolVar(&serverMode, "server", false, "Run in server mode")
@@ -698,13 +698,17 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 		return runPrompt(ctx, provider, agent, mcpClients, tools, &lastMessage, messages, tweaker, isInteractive) // Pass empty prompt
 	}
 
+	if tweaker != nil {
+		tweaker.RecordState(*messages, "final_save")
+	}
+
 	if isInteractive {
 		fmt.Println() // Add spacing
 	}
 	return nil
 }
 
-func generateTraceID() string {
+func generateTraceID(fileSuffix string) string {
 	now := time.Now()
 	// YYYYMMDDHHMMSSmmm
 	timestamp := now.Format("20060102150405.000")
@@ -717,7 +721,7 @@ func generateTraceID() string {
 	// If using Go < 1.20, uncomment and import "math/rand" and add rand.Seed(time.Now().UnixNano()).
 	randomSuffix := fmt.Sprintf("%04d", rand.Intn(10000))
 
-	return fmt.Sprintf("%s-%s", timestamp, randomSuffix)
+	return fmt.Sprintf("%s-%s%s", timestamp, randomSuffix, fileSuffix)
 }
 
 var McpClients map[string]mcpclient.MCPClient
@@ -748,9 +752,9 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	// Model flag validation (presence and default) is now handled in rootCmd.RunE
 
 	// Generate trace file path for CLI mode
-	traceID := generateTraceID()
+	traceID := generateTraceID("")
 	traceFileName := fmt.Sprintf("%s.yaml", traceID)
-	fullTracePath := filepath.Join(tracesDir, traceFileName)
+	fullTracePath := filepath.Join(TracesDir, traceFileName)
 	log.Info("Trace file will be saved to", "path", fullTracePath)
 
 	// Load the agent specified by agentNameFlag
@@ -797,7 +801,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		"task", taskForModelSelection)
 
 	// Initialize PromptRuntimeTweaks with the trace path for CLI mode
-	cliTweaker := NewDefaultPromptRuntimeTweaks(fullTracePath)
+	cliTweaker := NewDefaultPromptRuntimeTweaks("")
 	// The tweaker is now passed as a direct argument to runPrompt,
 	// so setting it in context here is not strictly necessary for runPrompt itself,
 	// but other functions might still expect it if not refactored.
@@ -946,7 +950,7 @@ type ModelInfo struct {
 
 // runServerMode uses the loaded models configuration.
 func runServerMode(ctx context.Context, modelsCfg *ModelsConfig) error {
-	log.Info("Starting server mode", "port", serverPort, "tracesDir", tracesDir, "modelsFile", modelsConfigFile)
+	log.Info("Starting server mode", "port", serverPort, "tracesDir", TracesDir, "modelsFile", modelsConfigFile)
 
 	// --- Pre-initialize MCP Clients and Tools for Server Mode ---
 	mcpConfig, err := loadMCPConfig()
@@ -1131,7 +1135,7 @@ func handleStartJob(
 	currentJobCtx = jobCtx
 	currentJobCancel = jobCancel
 
-	jobTweaker := NewDefaultPromptRuntimeTweaks()
+	jobTweaker := NewDefaultPromptRuntimeTweaks("")
 
 	// Construct initial message from user_query
 	initialUserMessage := history.HistoryMessage{
@@ -1155,19 +1159,19 @@ func handleStartJob(
 		currentJobCtx = nil
 		currentJobCancel = nil
 		jobMutex.Unlock()
-		log.Error("Failed to record initial state for job", "job_id", jobID, "error", err)
+		log.Error("Failed to record initial state for job", "job_id", jobTweaker.JobId, "error", err)
 		http.Error(w, "Failed to save initial state", http.StatusInternalServerError)
 		return
 	}
 
 	jobMutex.Unlock() // Unlock before starting goroutine to avoid holding lock for too long
 
-	log.Info("Starting job", "job_id", jobID, "agent_name", agentNameToUse, "selected_model_id", modelIDToUse, "trace_file", traceFilePath)
+	log.Info("Starting job", "job_id", jobTweaker.JobId, "agent_name", agentNameToUse, "selected_model_id", modelIDToUse, "trace_file", jobTweaker.traceFilePath)
 	// Pass selected model_id, determined system_message, mcpClients, allTools, and modelsCfg to processJob
-	go processJob(jobCtx, jobID, modelIDToUse, agent, systemPromptToUse, messagesForHistory, jobTweaker, mcpClients, allTools, modelsCfg)
+	go processJob(jobCtx, jobTweaker.JobId, modelIDToUse, agent, systemPromptToUse, messagesForHistory, jobTweaker, mcpClients, allTools, modelsCfg)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "started", "job_id": jobID, "agent_used": agentNameToUse, "model_selected": modelIDToUse})
+	json.NewEncoder(w).Encode(map[string]string{"status": "started", "job_id": jobTweaker.JobId, "agent_used": agentNameToUse, "model_selected": modelIDToUse})
 }
 
 func handleListModels(w http.ResponseWriter, r *http.Request, modelsCfg *ModelsConfig) {
@@ -1210,9 +1214,9 @@ func handleJobStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if currentJobID != "" {
-		json.NewEncoder(w).Encode(map[string]string{"status": "already_running", "job_id": currentJobID})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "already_running", "job_id": currentJobID})
 	} else {
-		json.NewEncoder(w).Encode(map[string]string{"status": "idle"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "idle"})
 	}
 }
 
@@ -1387,9 +1391,9 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	}
 
 	// Initialize PromptRuntimeTweaks for this sub-agent run
-	subAgentTweaker := NewDefaultPromptRuntimeTweaks()
+	subAgentTweaker := NewDefaultPromptRuntimeTweaks("-sub-" + agentName)
 	// The trace file path for sub-agent will be based on its own jobID.
-	// Example: subAgentTweaker := NewDefaultPromptRuntimeTweaks(filepath.Join(TracesDir, fmt.Sprintf("%s_sub.yaml", subAgentTweaker.jobId)))
+	// Example: subAgentTweaker := NewDefaultPromptRuntimeTweaks(filepath.Join(TracesDir, fmt.Sprintf("%s_sub.yaml", subAgentTweaker.JobId)))
 	// For simplicity, using default trace path generation within NewDefaultPromptRuntimeTweaks.
 
 	// runPrompt with isInteractive=false will use logging for output.
@@ -1400,7 +1404,7 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	if err != nil {
 		// Error is already logged by runPrompt or its callees.
 		// Return the error to indicate failure to the main Execute function.
-		return "", subAgentTweaker.jobId, fmt.Errorf("error processing non-interactive prompt: %w", err)
+		return "", subAgentTweaker.JobId, fmt.Errorf("error processing non-interactive prompt: %w", err)
 	}
 
 	// Print the assistant's final textual response to stdout.
@@ -1423,7 +1427,7 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 
 	// Get the job ID from the tweaker used in this sub-agent run.
 	// This assumes subAgentTweaker was initialized earlier in this function.
-	// If NewDefaultPromptRuntimeTweaks was called, subAgentTweaker.jobId would be set.
+	// If NewDefaultPromptRuntimeTweaks was called, subAgentTweaker.JobId would be set.
 	// Let's retrieve it from the tweaker instance.
 	jobIDForResult := ""
 	// This part assumes subAgentTweaker is in scope and was initialized.
@@ -1433,9 +1437,8 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	// Let's assume subAgentTweaker is the one created and used.
 	// The variable `subAgentTweaker` was defined in the previous block.
 	if subAgentTweaker != nil {
-		jobIDForResult = subAgentTweaker.jobId
+		jobIDForResult = subAgentTweaker.JobId
 	}
-
 
 	if lastAssistantText != "" {
 		return lastAssistantText, jobIDForResult, nil
