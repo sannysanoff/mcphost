@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +67,7 @@ const (
 	maxBackoff     = 30 * time.Second
 	maxRetries     = 5 // Will reach close to max backoff
 	traceFilePerm  = 0644
+	llmCacheDir    = "llm_cache" // Directory for LLM call caching
 )
 
 var rootCmd = &cobra.Command{
@@ -357,6 +360,93 @@ func updateRenderer() error {
 	return err
 }
 
+func generateCacheKey(providerName, modelName, systemPrompt, reqPrompt string, llmMessages []history.Message) (string, error) {
+	// Serialize llmMessages to JSON to ensure consistent hashing
+	messagesJSON, err := json.Marshal(llmMessages)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal messages for cache key: %w", err)
+	}
+
+	keyData := fmt.Sprintf("%s-%s-%s-%s-%s", providerName, modelName, systemPrompt, reqPrompt, string(messagesJSON))
+	hasher := sha256.New()
+	hasher.Write([]byte(keyData))
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func createMessageWithCache(ctx context.Context, provider history.Provider, reqPrompt string, llmMessages []history.Message, effectiveTools []history.Tool) (history.Message, error) {
+	cacheKey, err := generateCacheKey(provider.Name(), provider.Model(), provider.SystemPrompt(), reqPrompt, llmMessages)
+	if err != nil {
+		log.Error("Failed to generate cache key, proceeding without cache", "error", err)
+		// Fallback to direct call if key generation fails
+		return provider.CreateMessage(ctx, reqPrompt, llmMessages, effectiveTools)
+	}
+
+	// Ensure cache directory exists
+	if _, err := os.Stat(llmCacheDir); os.IsNotExist(err) {
+		if mkdirErr := os.MkdirAll(llmCacheDir, 0755); mkdirErr != nil {
+			log.Error("Failed to create cache directory, proceeding without cache", "dir", llmCacheDir, "error", mkdirErr)
+			return provider.CreateMessage(ctx, reqPrompt, llmMessages, effectiveTools)
+		}
+		log.Info("Created LLM cache directory", "path", llmCacheDir)
+	}
+
+	cacheFilePath := filepath.Join(llmCacheDir, cacheKey+".json")
+
+	// Attempt to read from cache
+	cachedData, readErr := os.ReadFile(cacheFilePath)
+	if readErr == nil {
+		var cachedMsg history.HistoryMessage
+		if unmarshalErr := json.Unmarshal(cachedData, &cachedMsg); unmarshalErr == nil {
+			log.Debug("LLM cache hit", "key", cacheKey, "file", cacheFilePath)
+			return &cachedMsg, nil // Return as history.Message
+		}
+		log.Warn("LLM cache hit but failed to unmarshal, proceeding to fetch", "key", cacheKey, "error", unmarshalErr)
+	} else if !os.IsNotExist(readErr) {
+		log.Warn("Failed to read LLM cache file, proceeding to fetch", "key", cacheKey, "error", readErr)
+	} else {
+		log.Debug("LLM cache miss", "key", cacheKey)
+	}
+
+	// Cache miss or error reading cache, call the provider
+	message, err := provider.CreateMessage(ctx, reqPrompt, llmMessages, effectiveTools)
+	if err != nil {
+		return nil, err
+	}
+
+	// Save to cache
+	// Type assert to *history.HistoryMessage or ensure message is directly marshalable.
+	// Most providers return *history.HistoryMessage which implements history.Message.
+	messageToCache, ok := message.(*history.HistoryMessage)
+	if !ok {
+		// If it's not *history.HistoryMessage, we might need a more generic way or skip caching
+		// For now, let's try to marshal it directly if it's not *history.HistoryMessage.
+		// This might fail if `message` is an interface with no concrete struct to marshal.
+		// However, standard providers should return *history.HistoryMessage.
+		log.Warn("Message from provider is not *history.HistoryMessage, attempting direct marshal for cache", "type", fmt.Sprintf("%T", message))
+		// If direct marshalling of an interface is problematic, this part needs refinement.
+		// For now, we assume it's either *history.HistoryMessage or something else json.Marshal can handle.
+	}
+
+	jsonData, marshalErr := json.Marshal(messageToCache) // Use messageToCache if assertion was successful, else message
+	if messageToCache == nil { // if assertion failed, try to marshal original message
+		jsonData, marshalErr = json.Marshal(message)
+	}
+
+	if marshalErr != nil {
+		log.Error("Failed to marshal message for LLM cache, response not cached", "key", cacheKey, "error", marshalErr)
+		// Return the original message even if caching fails
+		return message, nil
+	}
+
+	if writeErr := os.WriteFile(cacheFilePath, jsonData, traceFilePerm); writeErr != nil {
+		log.Error("Failed to write message to LLM cache", "key", cacheKey, "file", cacheFilePath, "error", writeErr)
+	} else {
+		log.Debug("LLM response cached", "key", cacheKey, "file", cacheFilePath)
+	}
+
+	return message, nil
+}
+
 // Method implementations for simpleMessage
 func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, prompt *history.HistoryMessage, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) error {
 	// Display the user's prompt if it's not empty and in interactive mode
@@ -396,10 +486,12 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 			if prompt != nil {
 				reqPrompt = prompt.GetContent()
 			}
-			message, err = provider.CreateMessage(
+			// Use the caching wrapper function
+			message, err = createMessageWithCache(
 				ctx,
-				reqPrompt,   // Pass the current prompt string
-				llmMessages, // Pass the history *before* this prompt
+				provider,
+				reqPrompt,
+				llmMessages,
 				effectiveTools,
 			)
 		}
