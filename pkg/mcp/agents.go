@@ -42,6 +42,16 @@ type yaegiAgent struct {
 	implementation *system.AgentImplementationBase
 }
 
+func makePascalCase(name string) string {
+	parts := strings.Split(name, "_")
+	for i := range parts {
+		if len(parts[i]) > 0 {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 // ensureImplementationReady checks if the agent script has been modified, reloads it if necessary,
 // and ensures that a.implementation is populated by calling 'agents.GetImplementation()' from the script.
 func (a *yaegiAgent) ensureImplementationReady() error {
@@ -84,7 +94,8 @@ func (a *yaegiAgent) ensureImplementationReady() error {
 		log.Debug("Attempting to load/reload agent implementation from script.", "agent", a.filename)
 		// Attempt to get the agent implementation from the script.
 		// Assumes agent scripts define "agents.GetImplementation() (*system.AgentImplementationBase)".
-		val, err := a.interpreter.Eval("agents.GetImplementation()")
+		baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
+		val, err := a.interpreter.Eval(makePascalCase(baseName) + "New()")
 		if err != nil {
 			a.implementation = nil // Ensure implementation is nil if fetching fails
 			return fmt.Errorf("failed to call GetImplementation in agent script %s: %w. Ensure GetImplementation exists and returns *system.AgentImplementationBase.", a.filename, err)
