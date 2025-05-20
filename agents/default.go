@@ -22,6 +22,7 @@ Today is: %s ."
 `)
 }
 
+//goland:noinspection GoUnusedExportedFunction
 func DefaultNew() *DefaultAgent {
 	return &DefaultAgent{system.AgentImplementationBase{}}
 }

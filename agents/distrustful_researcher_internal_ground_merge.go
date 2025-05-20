@@ -12,6 +12,7 @@ type DistrustfulResearcherInternalGroundMergeAgent struct {
 }
 
 // DistrustfulResearcherInternalGroundMergeNew creates a new DistrustfulResearcherInternalGroundMergeAgent.
+//goland:noinspection GoUnusedExportedFunction
 func DistrustfulResearcherInternalGroundMergeNew() *DistrustfulResearcherInternalGroundMergeAgent {
 	return &DistrustfulResearcherInternalGroundMergeAgent{system.AgentImplementationBase{}}
 }

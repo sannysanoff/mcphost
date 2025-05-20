@@ -12,6 +12,7 @@ type DistrustfulResearcherInternalDistrustAgent struct {
 }
 
 // DistrustfulResearcherInternalDistrustNew creates a new DistrustfulResearcherInternalDistrustAgent.
+//goland:noinspection GoUnusedExportedFunction
 func DistrustfulResearcherInternalDistrustNew() *DistrustfulResearcherInternalDistrustAgent {
 	return &DistrustfulResearcherInternalDistrustAgent{system.AgentImplementationBase{}}
 }
