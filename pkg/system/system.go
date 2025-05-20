@@ -30,7 +30,7 @@ type AgentImplementation struct {
 type AgentImplementationBase struct {
 	filename string
 
-	coAgents map(string)[]history.HistoryMessage
+	coAgents map[string][]history.HistoryMessage
 
 }
 
