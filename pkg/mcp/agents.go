@@ -97,9 +97,7 @@ func (a *yaegiAgent) ensureImplementationReady() error {
 			return fmt.Errorf("failed to call %s in agent script %s: %w. Ensure %s exists and returns *system.AgentImplementationBase.", constructorName, a.filename, err, constructorName)
 		}
 
-		vali := val.Interface()
-		fmt.Printf("%v", vali)
-		impl, ok := vali.(*system.Agent)
+		impl, ok := val.Interface().(*system.AgentImplementationBase)
 		if !ok {
 			a.implementation = nil
 			return fmt.Errorf("%s in agent script %s did not return *system.AgentImplementationBase, got %T", constructorName, a.filename, val.Interface())
