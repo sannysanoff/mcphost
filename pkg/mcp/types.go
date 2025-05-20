@@ -28,11 +28,12 @@ type DefaultPromptRuntimeTweaks struct {
 	traceFilePath string
 	nextHistoryID int
 	JobId         string
+	agentName     string // Store the agent name
 }
 
 // NewDefaultPromptRuntimeTweaks creates a new instance of DefaultPromptRuntimeTweaks.
 // traceFilePath can be empty if tracing is disabled.
-func NewDefaultPromptRuntimeTweaks(suffix string) *DefaultPromptRuntimeTweaks {
+func NewDefaultPromptRuntimeTweaks(suffix string, agentName string) *DefaultPromptRuntimeTweaks {
 	jobID := generateTraceID(suffix)
 	currentJobID = jobID
 	traceFilePath := filepath.Join(TracesDir, fmt.Sprintf("%s.yaml", jobID))
@@ -40,6 +41,7 @@ func NewDefaultPromptRuntimeTweaks(suffix string) *DefaultPromptRuntimeTweaks {
 		traceFilePath: traceFilePath,
 		nextHistoryID: 1, // Start IDs from 1
 		JobId:         jobID,
+		agentName:     agentName,
 	}
 }
 
@@ -59,6 +61,11 @@ func (d *DefaultPromptRuntimeTweaks) AssignIDsToNewMessage(newMessage *history.H
 		newMessage.PreviousID = existingMessages[len(existingMessages)-1].ID
 	} else {
 		newMessage.PreviousID = 0 // No previous message, or use a specific sentinel like -1 if 0 is a valid ID.
+		// If this is the first message, add agent metadata
+		if newMessage.Metadata == nil {
+			newMessage.Metadata = make(map[string]interface{})
+		}
+		newMessage.Metadata["agent_name"] = d.agentName
 	}
 }
 

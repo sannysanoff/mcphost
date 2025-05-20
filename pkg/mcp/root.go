@@ -1054,7 +1054,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		"task", taskForModelSelection)
 
 	// Initialize PromptRuntimeTweaks with the trace path for CLI mode
-	cliTweaker := NewDefaultPromptRuntimeTweaks("")
+	cliTweaker := NewDefaultPromptRuntimeTweaks("", agentNameFlag)
 	// The tweaker is now passed as a direct argument to runPrompt,
 	// so setting it in context here is not strictly necessary for runPrompt itself,
 	// but other functions might still expect it if not refactored.
@@ -1388,7 +1388,7 @@ func handleStartJob(
 	currentJobCtx = jobCtx
 	currentJobCancel = jobCancel
 
-	jobTweaker := NewDefaultPromptRuntimeTweaks("")
+	jobTweaker := NewDefaultPromptRuntimeTweaks("", agentNameToUse)
 
 	// Construct initial message from user_query
 	initialUserMessage := history.HistoryMessage{
@@ -1644,7 +1644,7 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	}
 
 	// Initialize PromptRuntimeTweaks for this sub-agent run
-	subAgentTweaker := NewDefaultPromptRuntimeTweaks("-sub-" + agentName)
+	subAgentTweaker := NewDefaultPromptRuntimeTweaks("-sub-"+agentName, agentName)
 	// The trace file path for sub-agent will be based on its own jobID.
 	// Example: subAgentTweaker := NewDefaultPromptRuntimeTweaks(filepath.Join(TracesDir, fmt.Sprintf("%s_sub.yaml", subAgentTweaker.JobId)))
 	// For simplicity, using default trace path generation within NewDefaultPromptRuntimeTweaks.
