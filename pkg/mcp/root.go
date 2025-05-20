@@ -60,6 +60,7 @@ var (
 	currentJobCtx    context.Context
 	currentJobCancel context.CancelFunc
 	userPromptCLI    string // For --user-prompt flag
+	enableCaching    bool   // Global flag to enable/disable caching
 )
 
 const (
@@ -179,6 +180,10 @@ func init() {
 
 	// CLI direct prompt flag
 	rootCmd.Flags().StringVar(&userPromptCLI, "user-prompt", "", "User prompt to send directly. If specified, runs non-interactively and exits after response.")
+
+	// Caching flag
+	rootCmd.PersistentFlags().
+		BoolVar(&enableCaching, "enable-caching", true, "enable LLM and tool call caching")
 }
 
 // createProvider initializes an LLM provider based on the model ID and models configuration.
@@ -407,6 +412,11 @@ func generateToolCallCacheKey(precedingMessagesHash string, toolName string, too
 }
 
 func createMessageWithCache(ctx context.Context, provider history.Provider, reqPrompt string, llmMessages []history.Message, effectiveTools []history.Tool) (history.Message, error) {
+	if !enableCaching {
+		log.Debug("Caching is disabled, calling provider directly.")
+		return provider.CreateMessage(ctx, reqPrompt, llmMessages, effectiveTools)
+	}
+
 	cacheKey, err := generateCacheKey(provider.Name(), provider.GetModel(), provider.GetSystemPrompt(), reqPrompt, llmMessages)
 	if err != nil {
 		log.Error("Failed to generate cache key, proceeding without cache", "error", err)
@@ -539,9 +549,16 @@ func callToolWithCache(
 	rateLimit time.Duration,
 	isInteractive bool,
 ) (*mcp.CallToolResult, error) {
-
 	partsForDisplay := strings.Split(fullToolName, "__")
 	simpleToolNameForDisplay := fullToolName
+	if len(partsForDisplay) == 2 {
+		simpleToolNameForDisplay = partsForDisplay[1]
+	}
+
+	if !enableCaching {
+		log.Debug("Caching is disabled, calling tool directly.", "tool", fullToolName)
+		return performActualToolCall(ctx, mcpClient, fullToolName, toolArgsJSON, rateLimit, isInteractive, simpleToolNameForDisplay)
+	}
 	if len(partsForDisplay) == 2 {
 		simpleToolNameForDisplay = partsForDisplay[1]
 	}
