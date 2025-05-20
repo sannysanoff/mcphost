@@ -2,12 +2,9 @@ package mcp
 
 import (
 	"encoding/json"
-	"encoding/json"
 	"fmt"
-	"github.com/sannysanoff/mcphost/pkg/history" // Keep if NormalizeHistory is used by system.Agent
 	"github.com/sannysanoff/mcphost/pkg/system"
 	"net/http"
-	"strings" // Keep for strings.TrimSuffix if used, or general string ops
 
 	"github.com/charmbracelet/log"
 )
