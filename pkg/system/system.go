@@ -8,9 +8,35 @@ func NativeFunction(a string) string {
 	return a + "X"
 }
 
-var PerformLLMCallHook func(string, string) (string, error)
+type AgentImplementation struct {
+	AgentData               any
+	GetPrompt               func() string
+	DefaultNormalizeHistory func(messages []history.HistoryMessage) []history.HistoryMessage
+}
 
-func PerformLLMCall(agent string, prompt string) (string, error) {
+type AgentImplementationBase struct {
+	filename string
+}
+
+func (e *AgentImplementationBase) GetPrompt() string {
+	return "You are helpful assistant"
+}
+
+func (e *AgentImplementationBase) DefaultNormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+	return messages
+}
+
+func (e *AgentImplementationBase) Filename() string {
+	return e.filename
+}
+
+func (e *AgentImplementationBase) GetTaskForModelSelection() string {
+	return "default"
+}
+
+var PerformLLMCallHook func(string, string) (string, string, error)
+
+func PerformLLMCall(agent string, prompt string) (string, string, error) {
 	return PerformLLMCallHook(agent, prompt)
 }
 

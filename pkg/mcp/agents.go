@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/sannysanoff/mcphost/pkg/history"
+	"github.com/sannysanoff/mcphost/pkg/system"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -34,11 +35,12 @@ type Agent interface {
 }
 
 type yaegiAgent struct {
-	filename    string
-	fullPath    string
-	interpreter *interp.Interpreter
-	lastCheck   int64
-	lastModTime time.Time
+	filename       string
+	fullPath       string
+	interpreter    *interp.Interpreter
+	lastCheck      int64
+	lastModTime    time.Time
+	implementation *system.AgentImplementationBase
 }
 
 func (a *yaegiAgent) checkAndReload() error {
