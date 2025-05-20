@@ -77,7 +77,7 @@ var rootCmd = &cobra.Command{
 through a unified interface. It supports various tools through MCP servers
 and provides streaming responses.
 
-Model selection is driven by agents. Specify an agent using the --agent flag (default: "default").
+model selection is driven by agents. Specify an agent using the --agent flag (default: "default").
 The agent determines a task, and MCPHost selects the best model for that task from 'models.yaml'.
 
 Example (CLI):
@@ -430,7 +430,7 @@ func createMessageWithCache(ctx context.Context, provider history.Provider, reqP
 	}
 
 	jsonData, marshalErr := json.Marshal(messageToCache) // Use messageToCache if assertion was successful, else message
-	if messageToCache == nil { // if assertion failed, try to marshal original message
+	if messageToCache == nil {                           // if assertion failed, try to marshal original message
 		jsonData, marshalErr = json.Marshal(message)
 	}
 
@@ -843,7 +843,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		AllTools = GenerateToolsFromMCPClients(ctx, McpClients, AllTools)
 
 	}
-	// Model flag validation (presence and default) is now handled in rootCmd.RunE
+	// model flag validation (presence and default) is now handled in rootCmd.RunE
 
 	// Generate trace file path for CLI mode
 	traceID := generateTraceID("")
