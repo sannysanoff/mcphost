@@ -562,13 +562,15 @@ func callToolWithCache(
 	cachedData, readErr := os.ReadFile(cacheFilePath)
 	if readErr == nil {
 		var cachedResult mcp.CallToolResult
-		if unmarshalErr := json.Unmarshal(cachedData, &cachedResult); unmarshalErr == nil {
+		var unmarshalErr error // Declare unmarshalErr here
+		if unmarshalErr = json.Unmarshal(cachedData, &cachedResult); unmarshalErr == nil {
 			log.Debug("Tool call cache hit", "tool", fullToolName, "key", cacheKey, "file", cacheFilePath)
 			if isInteractive { // Brief pause to simulate work for UX, as cache is instant
 				_ = spinner.New().Title(fmt.Sprintf("Using cached result for %s...", simpleToolNameForDisplay)).Action(func() { time.Sleep(50 * time.Millisecond) }).Run()
 			}
 			return &cachedResult, nil
 		}
+		// Now unmarshalErr is in scope
 		log.Warn("Tool call cache hit but failed to unmarshal, proceeding to fetch", "tool", fullToolName, "key", cacheKey, "error", unmarshalErr)
 	} else if !os.IsNotExist(readErr) {
 		log.Warn("Failed to read tool call cache file, proceeding to fetch", "tool", fullToolName, "key", cacheKey, "error", readErr)
@@ -768,7 +770,7 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 			continue
 		}
 
-		serverName, toolName := parts[0], parts[1]
+		serverName, _ := parts[0], parts[1] // toolName assigned to _
 		mcpClient, ok := mcpClients[serverName]
 		if !ok {
 			errMsg := fmt.Sprintf("Error: Server not found for tool: %s (server: %s)", toolCall.GetName(), serverName)
@@ -779,7 +781,6 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 			continue
 		}
 
-		var toolArgs map[string]interface{}
 		// Get rate limit from config if available
 		var rateLimit time.Duration
 		// Ensure mcpClient is of type MCPClientWithConfig to access GetConfig()
