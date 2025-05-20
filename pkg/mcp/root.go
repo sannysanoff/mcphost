@@ -374,7 +374,7 @@ func generateCacheKey(providerName, modelName, systemPrompt, reqPrompt string, l
 }
 
 func createMessageWithCache(ctx context.Context, provider history.Provider, reqPrompt string, llmMessages []history.Message, effectiveTools []history.Tool) (history.Message, error) {
-	cacheKey, err := generateCacheKey(provider.Name(), provider.Model(), provider.SystemPrompt(), reqPrompt, llmMessages)
+	cacheKey, err := generateCacheKey(provider.Name(), provider.GetModel(), provider.GetSystemPrompt(), reqPrompt, llmMessages)
 	if err != nil {
 		log.Error("Failed to generate cache key, proceeding without cache", "error", err)
 		// Fallback to direct call if key generation fails
@@ -396,10 +396,12 @@ func createMessageWithCache(ctx context.Context, provider history.Provider, reqP
 	cachedData, readErr := os.ReadFile(cacheFilePath)
 	if readErr == nil {
 		var cachedMsg history.HistoryMessage
-		if unmarshalErr := json.Unmarshal(cachedData, &cachedMsg); unmarshalErr == nil {
+		var unmarshalErr error // Declare unmarshalErr here
+		if unmarshalErr = json.Unmarshal(cachedData, &cachedMsg); unmarshalErr == nil {
 			log.Debug("LLM cache hit", "key", cacheKey, "file", cacheFilePath)
 			return &cachedMsg, nil // Return as history.Message
 		}
+		// Now unmarshalErr is in scope
 		log.Warn("LLM cache hit but failed to unmarshal, proceeding to fetch", "key", cacheKey, "error", unmarshalErr)
 	} else if !os.IsNotExist(readErr) {
 		log.Warn("Failed to read LLM cache file, proceeding to fetch", "key", cacheKey, "error", readErr)
