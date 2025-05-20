@@ -36,125 +36,189 @@ type Agent interface {
 
 type yaegiAgent struct {
 	filename       string
-	fullPath    string
-	interpreter *interp.Interpreter
-	lastCheck   int64
-	lastModTime time.Time
-	agentImpl   Agent // Holds the instantiated agent implementation
-}
-
-// reloadAgentScript evaluates the agent script and re-initializes the agentImpl.
-func (a *yaegiAgent) reloadAgentScript() error {
-	content, err := os.ReadFile(a.fullPath)
-	if err != nil {
-		return fmt.Errorf("failed to read agent file %s: %w", a.fullPath, err)
-	}
-
-	// Re-evaluate the script in the existing interpreter
-	_, err = a.interpreter.Eval(string(content))
-	if err != nil {
-		return fmt.Errorf("failed to evaluate agent code from %s: %w", a.fullPath, err)
-	}
-
-	// Re-initialize the agent implementation by calling its "New" function
-	agentName := strings.TrimSuffix(filepath.Base(a.filename), ".go")
-	newFuncName := "agents." + makePascalCase(agentName) + "New"
-
-	val, err := a.interpreter.Eval(newFuncName + "()")
-	if err != nil {
-		return fmt.Errorf("failed to call %s for agent %s: %w", newFuncName, a.filename, err)
-	}
-
-	impl, ok := val.Interface().(Agent)
-	if !ok {
-		return fmt.Errorf("%s for agent %s did not return a compatible Agent implementation (got %T)", newFuncName, a.filename, val.Interface())
-	}
-	if impl == nil {
-		return fmt.Errorf("%s for agent %s returned a nil Agent implementation", newFuncName, a.filename)
-	}
-
-	a.agentImpl = impl
-	log.Info("Agent implementation reloaded successfully", "agent", a.filename, "new_func", newFuncName)
-	return nil
+	fullPath       string
+	interpreter    *interp.Interpreter
+	lastCheck      int64
+	lastModTime    time.Time
+	implementation *system.AgentImplementationBase
 }
 
 func (a *yaegiAgent) checkAndReload() error {
 	now := time.Now().Unix()
-	if now-a.lastCheck < 1 { // Check at most once per second
+	if now-a.lastCheck < 1 {
 		return nil
 	}
-	a.lastCheck = now
 
 	info, err := os.Stat(a.fullPath)
 	if err != nil {
-		return fmt.Errorf("failed to stat agent file %s: %w", a.fullPath, err)
+		return fmt.Errorf("failed to stat agent file: %w", err)
 	}
 
 	if info.ModTime().After(a.lastModTime) {
-		log.Info("Agent file changed, attempting reload...", "agent", a.filename, "path", a.fullPath)
-		if err := a.reloadAgentScript(); err != nil {
-			// Log the error but don't necessarily prevent the agent from using the old impl if reload fails.
-			// Or, decide on a stricter policy (e.g., nil out agentImpl or return error).
-			// For now, log and continue with potentially stale implementation if reload fails.
-			log.Error("Failed to reload agent script", "agent", a.filename, "error", err)
-			// Return the error so callers can decide how to handle a failed reload.
-			return fmt.Errorf("failed to reload agent script %s: %w", a.filename, err)
+		// File changed - re-evaluate
+		content, err := os.ReadFile(a.fullPath)
+		if err != nil {
+			return fmt.Errorf("failed to read agent file: %w", err)
 		}
+
+		_, err = a.interpreter.Eval(string(content))
+		if err != nil {
+			return fmt.Errorf("failed to evaluate agent code: %w", err)
+		}
+
 		a.lastModTime = info.ModTime()
 	}
+
+	a.lastCheck = now
 	return nil
 }
 
-// GetSystemPrompt returns the system prompt from the instantiated agent.
+// prepareAgentCall handles the common logic of checking/reloading an agent
+// and constructing the function name to be called.
+func (a *yaegiAgent) prepareAgentCall(methodSuffix string, errorContext string) (string, error) {
+	if err := a.checkAndReload(); err != nil {
+		log.Error("Failed to check/reload agent for "+errorContext, "agent", a.filename, "method_suffix", methodSuffix, "error", err)
+		return "", err
+	}
+
+	baseName := strings.Title(strings.TrimSuffix(filepath.Base(a.filename), ".go"))
+	funcName := makePascalCase(baseName) + methodSuffix
+	return funcName, nil
+}
+
+// callStringMethod calls a method on the agent that is expected to return a string.
+// If the method doesn't exist, an error occurs, or it doesn't return a string, defaultValue is returned.
+func (a *yaegiAgent) callStringMethod(methodSuffix string, defaultValue string) string {
+	funcName, err := a.prepareAgentCall(methodSuffix, "string method '"+methodSuffix+"'")
+	if err != nil {
+		// Error already logged by prepareAgentCall
+		return defaultValue
+	}
+
+	evalStr := fmt.Sprintf("agents.%s()", funcName)
+	val, err := a.interpreter.Eval(evalStr)
+
+	if err != nil {
+		// Log if the error is not simply "symbol not found" which is an expected case for optional methods.
+		if !strings.Contains(err.Error(), "undefined") && !strings.Contains(err.Error(), "not found") {
+			log.Error("Failed to call agent function", "agent", a.filename, "func", funcName, "error", err)
+		} else {
+			log.Debug("Agent function not found or call failed, using default", "agent", a.filename, "func", funcName, "error_detail", err.Error())
+		}
+		return defaultValue
+	}
+
+	if val.Kind() == reflect.String {
+		return val.String()
+	}
+	log.Warn("Agent function did not return a string, using default", "agent", a.filename, "func", funcName, "return_type", val.Kind())
+	return defaultValue
+}
+
+// GetSystemPrompt calls the GetPrompt method on the agent.
 func (a *yaegiAgent) GetSystemPrompt() string {
-	if err := a.checkAndReload(); err != nil {
-		log.Error("Agent reload check failed for GetSystemPrompt", "agent", a.filename, "error", err)
-		// Fallback or default behavior
-		if a.agentImpl != nil {
-			log.Warn("Using potentially stale agent implementation for GetSystemPrompt due to reload error", "agent", a.filename)
-			return a.agentImpl.GetSystemPrompt()
-		}
-		return "You are a helpful assistant (fallback due to agent error)."
-	}
-	if a.agentImpl == nil { // Should ideally be caught by loadAgentFromFile
-		log.Error("Agent implementation is nil for GetSystemPrompt", "agent", a.filename)
-		return "You are a helpful assistant (fallback due to nil agent)."
-	}
-	return a.agentImpl.GetSystemPrompt()
+	return a.callStringMethod("GetPrompt", "")
 }
 
-// GetTaskForModelSelection returns the task for model selection from the instantiated agent.
+// GetTaskForModelSelection calls the GetTaskForModelSelection method on the agent.
 func (a *yaegiAgent) GetTaskForModelSelection() string {
-	if err := a.checkAndReload(); err != nil {
-		log.Error("Agent reload check failed for GetTaskForModelSelection", "agent", a.filename, "error", err)
-		if a.agentImpl != nil {
-			log.Warn("Using potentially stale agent implementation for GetTaskForModelSelection due to reload error", "agent", a.filename)
-			return a.agentImpl.GetTaskForModelSelection()
-		}
-		return "default" // Fallback
-	}
-	if a.agentImpl == nil {
-		log.Error("Agent implementation is nil for GetTaskForModelSelection", "agent", a.filename)
-		return "default" // Fallback
-	}
-	return a.agentImpl.GetTaskForModelSelection()
+	return a.callStringMethod("GetTaskForModelSelection", "default")
 }
 
-// NormalizeHistory processes messages using the instantiated agent's logic.
+// NormalizeHistory calls the NormalizeHistory method on the agent.
 func (a *yaegiAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
-	if err := a.checkAndReload(); err != nil {
-		log.Error("Agent reload check failed for NormalizeHistory", "agent", a.filename, "error", err)
-		if a.agentImpl != nil {
-			log.Warn("Using potentially stale agent implementation for NormalizeHistory due to reload error", "agent", a.filename)
-			return a.agentImpl.NormalizeHistory(messages)
+	normalizeFuncNameRaw, err := a.prepareAgentCall("NormalizeHistory", "NormalizeHistory")
+	if err != nil {
+		// Error already logged by prepareAgentCall
+		return messages
+	}
+
+	// The function name from prepareAgentCall might be like "DefaultNormalizeHistory".
+	// We need to access it as `agents.DefaultNormalizeHistory` in the interpreter.
+	targetFuncNameInScript := "agents." + normalizeFuncNameRaw
+
+	// Get a handle to the interpreted function
+	funcHandleVal, err := a.interpreter.Eval(targetFuncNameInScript)
+	if err != nil {
+		if strings.Contains(err.Error(), "undefined") || strings.Contains(err.Error(), "not found") {
+			log.Debug("NormalizeHistory function not found in agent, using original messages.", "agent", a.filename, "func", targetFuncNameInScript)
+		} else {
+			log.Error("Failed to get handle for NormalizeHistory function", "agent", a.filename, "func", targetFuncNameInScript, "error", err)
 		}
-		return messages // Fallback: return original messages
+		return messages
 	}
-	if a.agentImpl == nil {
-		log.Error("Agent implementation is nil for NormalizeHistory", "agent", a.filename)
-		return messages // Fallback: return original messages
+
+	if funcHandleVal.Kind() != reflect.Func {
+		log.Warn("NormalizeHistory symbol in agent is not a function, using original messages.", "agent", a.filename, "func", targetFuncNameInScript, "kind", funcHandleVal.Kind())
+		return messages
 	}
-	return a.agentImpl.NormalizeHistory(messages)
+
+	// Prepare arguments
+	messagesVal := reflect.ValueOf(messages)
+	args := []reflect.Value{messagesVal}
+
+	// Call the interpreted function
+	// Need to use a goroutine to protect against panics in Yaegi, and recover.
+	var results []reflect.Value
+	var callErr error
+
+	// Setup a channel to signal completion or panic
+	done := make(chan struct{})
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				callErr = fmt.Errorf("panic occurred during agent NormalizeHistory call: %v", r)
+				log.Error("Panic recovered from Yaegi call", "agent", a.filename, "func", targetFuncNameInScript, "panic", r)
+			}
+			close(done)
+		}()
+		results = funcHandleVal.Call(args)
+	}()
+
+	// Wait for the call to complete or timeout (optional, but good for safety)
+	// For now, let's wait indefinitely, but a timeout could be added.
+	<-done
+
+	if callErr != nil {
+		// Error already logged by the deferred panic recovery
+		return messages
+	}
+
+	// Process results
+	if len(results) != 1 {
+		log.Warn("NormalizeHistory function in agent did not return exactly one value, using original messages.", "agent", a.filename, "func", targetFuncNameInScript, "num_results", len(results))
+		return messages
+	}
+
+	resultVal := results[0]
+	if !resultVal.IsValid() {
+		log.Warn("NormalizeHistory function in agent returned an invalid value, using original messages.", "agent", a.filename, "func", targetFuncNameInScript)
+		return messages
+	}
+
+	// Check if the returned type is assignable to []history.HistoryMessage
+	// This is a more robust check than val.Interface().([]history.HistoryMessage)
+	// as it handles cases where the underlying types might be compatible but not identical.
+	// However, Yaegi usually returns the exact type or an interface.
+
+	// We expect the agent to return []history.HistoryMessage
+	expectedType := reflect.TypeOf(([]history.HistoryMessage)(nil))
+	if !resultVal.Type().AssignableTo(expectedType) {
+		log.Warn("NormalizeHistory function returned an incompatible type.", "agent", a.filename, "func", targetFuncNameInScript, "expected_type", expectedType, "actual_type", resultVal.Type())
+		return messages
+	}
+
+	if resultVal.CanInterface() {
+		if processedMessages, ok := resultVal.Interface().([]history.HistoryMessage); ok {
+			return processedMessages
+		}
+		log.Warn("NormalizeHistory function in agent returned a value that could not be asserted to []history.HistoryMessage, using original messages.", "agent", a.filename, "func", targetFuncNameInScript, "return_type", resultVal.Type())
+	} else {
+		log.Warn("NormalizeHistory function in agent returned an uninterfaceable value, using original messages.", "agent", a.filename, "func", targetFuncNameInScript)
+	}
+
+	return messages
 }
 
 func (a *yaegiAgent) Filename() string {
@@ -174,41 +238,23 @@ func loadAgentFromFile(agentFilePath string) (Agent, error) {
 		return nil, fmt.Errorf("failed to read agent file %s: %w", agentFilePath, err)
 	}
 
-	// Evaluate the agent's Go code first to define types and functions
-	_, err = i.Eval(string(agentFileContent))
-	if err != nil {
-		return nil, fmt.Errorf("failed to evaluate agent code from %s: %w", agentFilePath, err)
-	}
-
-	// Now, call the "New" function to get an agent instance
-	agentName := strings.TrimSuffix(filepath.Base(agentFilePath), ".go")
-	newFuncName := "agents." + makePascalCase(agentName) + "New" // e.g., agents.DefaultNew
-
-	val, err := i.Eval(newFuncName + "()") // Call the New function
-	if err != nil {
-		return nil, fmt.Errorf("failed to call %s for agent %s: %w", newFuncName, agentFilePath, err)
-	}
-
-	impl, ok := val.Interface().(Agent) // Assert to the mcp.Agent interface
-	if !ok {
-		return nil, fmt.Errorf("%s for agent %s did not return a compatible Agent implementation (got %T, expected mcp.Agent)", newFuncName, agentFilePath, val.Interface())
-	}
-	if impl == nil {
-		return nil, fmt.Errorf("%s for agent %s returned a nil Agent implementation", newFuncName, agentFilePath)
-	}
-
 	// Get file info for mod time
 	info, err := os.Stat(agentFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat agent file %s: %w", agentFilePath, err)
 	}
 
+	// Evaluate the agent's Go code
+	_, err = i.Eval(string(agentFileContent))
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate agent code: %w", err)
+	}
+
 	return &yaegiAgent{
 		filename:    filepath.Base(agentFilePath),
 		fullPath:    agentFilePath,
 		interpreter: i,
-		agentImpl:   impl, // Store the instantiated agent
-		lastCheck:   0,    // Force check on first use after load
+		lastCheck:   0,
 		lastModTime: info.ModTime(),
 	}, nil
 }
@@ -291,42 +337,20 @@ func LoadAgentByName(agentName string) (Agent, error) {
 			log.Info("Default agent file not found, creating one.", "path", agentFilePath)
 			defaultContent := `package agents
 
-import (
-	"fmt"
-	"github.com/sannysanoff/mcphost/pkg/history" // Needed if NormalizeHistory is overridden
-	"github.com/sannysanoff/mcphost/pkg/system"
-	"time"
-)
-
-// DefaultAgent is the structure for the default agent.
-// It embeds system.AgentImplementationBase to inherit default behaviors.
-type DefaultAgent struct {
-	system.AgentImplementationBase
+// DefaultGetPrompt provides a basic system prompt.
+func DefaultGetPrompt() string {
+	return "You are a helpful assistant."
 }
 
-// GetSystemPrompt overrides the base system prompt.
-func (a *DefaultAgent) GetSystemPrompt() string {
-	return fmt.Sprintf("You are a helpful assistant (auto-generated default agent). Today is %s.", time.Now().Format("January 2, 2006"))
+// DefaultGetTaskForModelSelection specifies the default task for model selection.
+func DefaultGetTaskForModelSelection() string {
+	return "general_assistance"
 }
 
-// NormalizeHistory can be overridden if specific normalization logic is needed.
-// By default, it uses the behavior from system.AgentImplementationBase.
-// func (a *DefaultAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
-//	 // Example: return a.AgentImplementationBase.NormalizeHistory(messages)
-//	 return messages
+// DefaultNormalizeHistory is a placeholder and returns messages as is.
+// func DefaultNormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+// 	return messages
 // }
-
-// GetTaskForModelSelection can be overridden if needed.
-// By default, it uses the behavior from system.AgentImplementationBase.
-// func (a *DefaultAgent) GetTaskForModelSelection() string {
-//	 return "custom_task_for_default"
-// }
-
-// DefaultNew is the constructor for DefaultAgent.
-// It must return a type that satisfies the mcp.Agent interface.
-func DefaultNew() *DefaultAgent {
-	return &DefaultAgent{}
-}
 `
 			if errWrite := os.WriteFile(agentFilePath, []byte(defaultContent), 0644); errWrite != nil {
 				return nil, fmt.Errorf("failed to create default agent file '%s': %w", agentFilePath, errWrite)
