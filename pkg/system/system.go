@@ -43,6 +43,15 @@ func (e *AgentImplementationBase) NormalizeHistory(messages []history.HistoryMes
 }
 
 func (e *AgentImplementationBase) Filename() string {
+	// Ensure this field is set by the agent's constructor or an init method.
+	// It should typically return the name the agent was registered with.
+	if e.filename == "" {
+		// This is a fallback or a gentle reminder that it should be set.
+		// Depending on strictness, could log a warning or even panic.
+		// For now, let's return a placeholder.
+		// log.Warn("AgentImplementationBase.filename is not set. Filename() will return 'unknown_agent_filename'.")
+		return "unknown_agent_filename_please_set_in_constructor"
+	}
 	return e.filename
 }
 
