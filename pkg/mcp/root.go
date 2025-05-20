@@ -373,6 +373,39 @@ func generateCacheKey(providerName, modelName, systemPrompt, reqPrompt string, l
 	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
+// ensureCacheDirExists creates the directory if it doesn't exist.
+func ensureCacheDirExists(dirPath string) error {
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		if mkdirErr := os.MkdirAll(dirPath, 0755); mkdirErr != nil {
+			log.Error("Failed to create cache directory", "dir", dirPath, "error", mkdirErr)
+			return mkdirErr
+		}
+		log.Info("Created cache directory", "path", dirPath)
+	} else if err != nil {
+		// Log if stat fails for reasons other than NotExist
+		log.Error("Failed to stat cache directory", "dir", dirPath, "error", err)
+		return err
+	}
+	return nil
+}
+
+func hashHistoryMessages(messages []history.Message) (string, error) {
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal messages for hashing: %w", err)
+	}
+	hasher := sha256.New()
+	hasher.Write(messagesJSON)
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func generateToolCallCacheKey(precedingMessagesHash string, toolName string, toolArgsJSON []byte) (string, error) {
+	keyData := fmt.Sprintf("%s-%s-%s", precedingMessagesHash, toolName, string(toolArgsJSON))
+	hasher := sha256.New()
+	hasher.Write([]byte(keyData))
+	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
 func createMessageWithCache(ctx context.Context, provider history.Provider, reqPrompt string, llmMessages []history.Message, effectiveTools []history.Tool) (history.Message, error) {
 	cacheKey, err := generateCacheKey(provider.Name(), provider.GetModel(), provider.GetSystemPrompt(), reqPrompt, llmMessages)
 	if err != nil {
@@ -382,12 +415,9 @@ func createMessageWithCache(ctx context.Context, provider history.Provider, reqP
 	}
 
 	// Ensure cache directory exists
-	if _, err := os.Stat(llmCacheDir); os.IsNotExist(err) {
-		if mkdirErr := os.MkdirAll(llmCacheDir, 0755); mkdirErr != nil {
-			log.Error("Failed to create cache directory, proceeding without cache", "dir", llmCacheDir, "error", mkdirErr)
-			return provider.CreateMessage(ctx, reqPrompt, llmMessages, effectiveTools)
-		}
-		log.Info("Created LLM cache directory", "path", llmCacheDir)
+	if err := ensureCacheDirExists(llmCacheDir); err != nil {
+		// Logged by ensureCacheDirExists, proceed without caching for this call
+		return provider.CreateMessage(ctx, reqPrompt, llmMessages, effectiveTools)
 	}
 
 	cacheFilePath := filepath.Join(llmCacheDir, cacheKey+".json")
@@ -449,6 +479,123 @@ func createMessageWithCache(ctx context.Context, provider history.Provider, reqP
 	return message, nil
 }
 
+// performActualToolCall encapsulates the non-cached logic of executing a tool.
+func performActualToolCall(
+	ctx context.Context,
+	mcpClient mcpclient.MCPClient,
+	fullToolName string, // serverName__toolName
+	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
+	rateLimit time.Duration,
+	isInteractive bool,
+	simpleToolNameForDisplay string, // Just toolName for display
+) (*mcp.CallToolResult, error) {
+	var toolArgs map[string]interface{}
+	if err := json.Unmarshal(toolArgsJSON, &toolArgs); err != nil {
+		errMsg := fmt.Sprintf("Error parsing tool arguments for %s before actual call: %v", fullToolName, err)
+		log.Error(errMsg, "args_json", string(toolArgsJSON))
+		return nil, fmt.Errorf(errMsg)
+	}
+
+	var toolResultPtr *mcp.CallToolResult
+	var callErr error
+
+	toolAction := func() {
+		if rateLimit > 0 {
+			time.Sleep(rateLimit)
+		}
+		req := mcp.CallToolRequest{}
+		parts := strings.Split(fullToolName, "__")
+		if len(parts) != 2 {
+			callErr = fmt.Errorf("invalid tool name format for MCP request: %s", fullToolName)
+			return
+		}
+		req.Params.Name = parts[1] // Use the part after "__" (the simple tool name)
+		req.Params.Arguments = toolArgs
+		toolResultPtr, callErr = mcpClient.CallTool(ctx, req)
+	}
+
+	if isInteractive {
+		_ = spinner.New().
+			Title(fmt.Sprintf("Running tool %s...", simpleToolNameForDisplay)).
+			Action(toolAction).
+			Run()
+	} else {
+		toolAction()
+	}
+
+	if callErr != nil {
+		return nil, callErr
+	}
+	return toolResultPtr, nil
+}
+
+// callToolWithCache handles caching for tool calls.
+func callToolWithCache(
+	ctx context.Context,
+	mcpClient mcpclient.MCPClient,
+	fullToolName string, // serverName__toolName
+	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
+	precedingMessagesHash string, // Hash of the LLM input context
+	rateLimit time.Duration,
+	isInteractive bool,
+) (*mcp.CallToolResult, error) {
+
+	partsForDisplay := strings.Split(fullToolName, "__")
+	simpleToolNameForDisplay := fullToolName
+	if len(partsForDisplay) == 2 {
+		simpleToolNameForDisplay = partsForDisplay[1]
+	}
+
+	cacheKey, err := generateToolCallCacheKey(precedingMessagesHash, fullToolName, toolArgsJSON)
+	if err != nil {
+		log.Error("Failed to generate tool call cache key, proceeding without cache", "tool", fullToolName, "error", err)
+		return performActualToolCall(ctx, mcpClient, fullToolName, toolArgsJSON, rateLimit, isInteractive, simpleToolNameForDisplay)
+	}
+
+	if err := ensureCacheDirExists(llmCacheDir); err != nil {
+		// Logged by ensureCacheDirExists, proceed without caching for this call
+		return performActualToolCall(ctx, mcpClient, fullToolName, toolArgsJSON, rateLimit, isInteractive, simpleToolNameForDisplay)
+	}
+
+	cacheFilePath := filepath.Join(llmCacheDir, "tool_"+cacheKey+".json")
+
+	cachedData, readErr := os.ReadFile(cacheFilePath)
+	if readErr == nil {
+		var cachedResult mcp.CallToolResult
+		if unmarshalErr := json.Unmarshal(cachedData, &cachedResult); unmarshalErr == nil {
+			log.Debug("Tool call cache hit", "tool", fullToolName, "key", cacheKey, "file", cacheFilePath)
+			if isInteractive { // Brief pause to simulate work for UX, as cache is instant
+				_ = spinner.New().Title(fmt.Sprintf("Using cached result for %s...", simpleToolNameForDisplay)).Action(func() { time.Sleep(50 * time.Millisecond) }).Run()
+			}
+			return &cachedResult, nil
+		}
+		log.Warn("Tool call cache hit but failed to unmarshal, proceeding to fetch", "tool", fullToolName, "key", cacheKey, "error", unmarshalErr)
+	} else if !os.IsNotExist(readErr) {
+		log.Warn("Failed to read tool call cache file, proceeding to fetch", "tool", fullToolName, "key", cacheKey, "error", readErr)
+	} else {
+		log.Debug("Tool call cache miss", "tool", fullToolName, "key", cacheKey)
+	}
+
+	toolResult, err := performActualToolCall(ctx, mcpClient, fullToolName, toolArgsJSON, rateLimit, isInteractive, simpleToolNameForDisplay)
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, marshalErr := json.Marshal(toolResult)
+	if marshalErr != nil {
+		log.Error("Failed to marshal tool call result for cache, response not cached", "tool", fullToolName, "key", cacheKey, "error", marshalErr)
+		return toolResult, nil // Return the original result even if caching fails
+	}
+
+	if writeErr := os.WriteFile(cacheFilePath, jsonData, traceFilePerm); writeErr != nil {
+		log.Error("Failed to write tool call result to cache", "tool", fullToolName, "key", cacheKey, "file", cacheFilePath, "error", writeErr)
+	} else {
+		log.Debug("Tool call result cached", "tool", fullToolName, "key", cacheKey, "file", cacheFilePath)
+	}
+
+	return toolResult, nil
+}
+
 // Method implementations for simpleMessage
 func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, prompt *history.HistoryMessage, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) error {
 	// Display the user's prompt if it's not empty and in interactive mode
@@ -465,6 +612,19 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 	llmMessages := make([]history.Message, len(*messages))
 	for i := range *messages {
 		llmMessages[i] = &(*messages)[i]
+	}
+
+	// Calculate hash of this history, this is the context for the upcoming LLM call, used for tool caching.
+	llmCallHistoryHashForToolCache := "" // Default to empty if error or no history
+	if len(llmMessages) > 0 {
+		var hashErr error
+		llmCallHistoryHashForToolCache, hashErr = hashHistoryMessages(llmMessages)
+		if hashErr != nil {
+			log.Warn("Failed to hash llmMessages for tool caching, tool cache might be less effective or fail.", "error", hashErr)
+			llmCallHistoryHashForToolCache = "error_hashing_history" // Use a distinct string on error to avoid empty string collisions
+		}
+	} else {
+		llmCallHistoryHashForToolCache = "empty_history" // Distinct string for empty history
 	}
 
 	log.Debug("Using provided PromptRuntimeTweaks for tool filtering and tracing")
@@ -641,53 +801,28 @@ func runPrompt(ctx context.Context, provider history.Provider, agent Agent, mcpC
 		}
 
 		var toolArgs map[string]interface{}
-		if err := json.Unmarshal(inputBytes, &toolArgs); err != nil {
-			errMsg := fmt.Sprintf("Error parsing tool arguments for %s: %v", toolCall.GetName(), err)
-			log.Error(errMsg)
-			if isInteractive {
-				fmt.Printf("\n%s\n", errorStyle.Render(errMsg))
-			}
-			continue
-		}
-
-		var toolResultPtr *mcp.CallToolResult
 		// Get rate limit from config if available
 		var rateLimit time.Duration
-		if serverConfig, ok := mcpClients[serverName].(interface{ GetConfig() ServerConfig }); ok {
-			if cfg := serverConfig.GetConfig(); cfg != nil {
-				if cfg.GetType() == transportStdio {
-					if stdioCfg, ok := cfg.(STDIOServerConfig); ok && stdioCfg.RateLimit > 0 {
-						rateLimit = time.Duration(float64(time.Second) / stdioCfg.RateLimit)
-					}
-				} else if sseCfg, ok := cfg.(SSEServerConfig); ok && sseCfg.RateLimit > 0 {
+		// Ensure mcpClient is of type MCPClientWithConfig to access GetConfig()
+		if clientWithConfig, okClientCfg := mcpClient.(MCPClientWithConfig); okClientCfg {
+			if serverCfg := clientWithConfig.GetConfig(); serverCfg != nil { // serverCfg is ServerConfig interface
+				if stdioCfg, okStdio := serverCfg.(STDIOServerConfig); okStdio && stdioCfg.RateLimit > 0 {
+					rateLimit = time.Duration(float64(time.Second) / stdioCfg.RateLimit)
+				} else if sseCfg, okSse := serverCfg.(SSEServerConfig); okSse && sseCfg.RateLimit > 0 {
 					rateLimit = time.Duration(float64(time.Second) / sseCfg.RateLimit)
 				}
 			}
 		}
 
-		toolAction := func() { // Renamed to toolAction to avoid conflict
-			// Apply rate limiting if configured
-			if rateLimit > 0 {
-				time.Sleep(rateLimit)
-			}
-			req := mcp.CallToolRequest{}
-			req.Params.Name = toolName
-			req.Params.Arguments = toolArgs
-			// Use the passed context `ctx` for the tool call for cancellability
-			toolResultPtr, err = mcpClient.CallTool(ctx, req)
-		}
-
-		if isInteractive {
-			_ = spinner.New().
-				Title(fmt.Sprintf("Running tool %s...", toolName)).
-				Action(toolAction).
-				Run()
-		} else {
-			toolAction()
-		}
+		// Call tool using the caching wrapper
+		// inputBytes are the marshalled tool arguments.
+		// llmCallHistoryHashForToolCache was computed earlier.
+		toolResultPtr, err := callToolWithCache(ctx, mcpClient, toolCall.GetName(), inputBytes, llmCallHistoryHashForToolCache, rateLimit, isInteractive)
 
 		if err != nil {
-			errMsg := fmt.Sprintf("Error calling tool %s: %v", toolName, err)
+			// err already contains tool name if it comes from performActualToolCall or mcpClient.CallTool
+			// For consistency, format it like existing error messages if needed, or rely on callToolWithCache's logging.
+			errMsg := fmt.Sprintf("Error during tool call for %s (ID: %s): %v", toolCall.GetName(), toolCall.GetID(), err)
 			log.Error(errMsg)
 			if isInteractive {
 				fmt.Printf("\n%s\n", errorStyle.Render(errMsg))
