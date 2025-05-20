@@ -19,20 +19,6 @@ import (
 	systemsymbols "github.com/sannysanoff/mcphost"
 )
 
-// Agent represents a loaded agent with its interpreter and methods
-type Agent interface {
-	// GetSystemPrompt returns the agent's default system prompt
-	GetSystemPrompt() string
-
-	// NormalizeHistory processes and normalizes message history
-	NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage
-
-	// Filename returns the source file name of this agent
-	Filename() string
-
-	GetTaskForModelSelection() string
-}
-
 type yaegiAgent struct {
 	filename       string
 	fullPath       string
@@ -105,13 +91,15 @@ func (a *yaegiAgent) ensureImplementationReady() error {
 		agentBaseName := strings.TrimSuffix(filepath.Base(a.filename), ".go")
 		constructorName := makePascalCase(agentBaseName) + "New"
 
-		val, err := a.interpreter.Eval(constructorName + "()")
+		val, err := a.interpreter.Eval("agents." + constructorName + "()")
 		if err != nil {
 			a.implementation = nil
 			return fmt.Errorf("failed to call %s in agent script %s: %w. Ensure %s exists and returns *system.AgentImplementationBase.", constructorName, a.filename, err, constructorName)
 		}
 
-		impl, ok := val.Interface().(*system.AgentImplementationBase)
+		vali := val.Interface()
+		fmt.Printf("%v", vali)
+		impl, ok := vali.(*system.Agent)
 		if !ok {
 			a.implementation = nil
 			return fmt.Errorf("%s in agent script %s did not return *system.AgentImplementationBase, got %T", constructorName, a.filename, val.Interface())
@@ -165,7 +153,7 @@ func (a *yaegiAgent) Filename() string {
 const agentsDir = "./agents" // Assuming agents are in a directory named 'agents' relative to the running binary.
 
 // loadAgentFromFile reads an agent file and returns an initialized Agent instance
-func loadAgentFromFile(agentFilePath string) (Agent, error) {
+func loadAgentFromFile(agentFilePath string) (system.Agent, error) {
 	i := interp.New(interp.Options{})
 	i.Use(stdlib.Symbols)
 	i.Use(systemsymbols.Symbols)
@@ -211,7 +199,7 @@ func HandleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var agents []Agent
+	var agents []system.Agent
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".go") || file.Name() == "agents.go" {
 			continue
@@ -247,12 +235,12 @@ func HandleListAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetDefaultAgent loads and returns the default agent implementation
-func GetDefaultAgent() (Agent, error) {
+func GetDefaultAgent() (system.Agent, error) {
 	return LoadAgentByName("default")
 }
 
 // LoadAgentByName loads a specific agent by its base name (e.g., "default", "research_agent")
-func LoadAgentByName(agentName string) (Agent, error) {
+func LoadAgentByName(agentName string) (system.Agent, error) {
 	if agentName == "" {
 		return nil, fmt.Errorf("agent name cannot be empty")
 	}
