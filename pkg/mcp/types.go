@@ -63,9 +63,11 @@ func (d *DefaultPromptRuntimeTweaks) AssignIDsToNewMessage(newMessage *history.H
 		newMessage.PreviousID = 0 // No previous message, or use a specific sentinel like -1 if 0 is a valid ID.
 		// If this is the first message, add agent metadata
 		if newMessage.Metadata == nil {
-			newMessage.Metadata = make(map[string]interface{})
+			// Initialize as a pointer to a new MessageMetadata map
+			newMessage.Metadata = &history.MessageMetadata{}
 		}
-		newMessage.Metadata["agent_name"] = d.agentName
+		// Dereference the pointer to access the map and set the agent_name
+		(*newMessage.Metadata)["agent_name"] = d.agentName
 	}
 }
 
