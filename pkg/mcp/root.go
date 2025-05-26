@@ -933,14 +933,21 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 }
 
 func filterToolsWithAgent(agent system.Agent, tools []history.Tool) []history.Tool {
-	et := agent.GetEnabledTools()
-	if et == nil {
+	enabledTools := agent.GetEnabledTools()
+	if enabledTools == nil {
 		return nil
 	}
+	enabledSet := make(map[string]struct{}, len(enabledTools))
+	for _, name := range enabledTools {
+		enabledSet[name] = struct{}{}
+	}
 	var filteredTools []history.Tool
-	///
+	for _, tool := range tools {
+		if _, ok := enabledSet[tool.Name]; ok {
+			filteredTools = append(filteredTools, tool)
+		}
+	}
 	return filteredTools
-
 }
 
 func filterToolsWithTweaker(tweaker PromptRuntimeTweaks, tools []history.Tool, effectiveTools []history.Tool) []history.Tool {
