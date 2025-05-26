@@ -635,7 +635,8 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 
 	log.Debug("Using provided PromptRuntimeTweaks for tool filtering and tracing")
 
-	var effectiveTools []history.Tool = FilterToolsWithTweaker(tweaker, tools, nil)
+	var effectiveTools []history.Tool = filterToolsWithTweaker(tweaker, tools, nil)
+	effectiveTools = filterToolsWithAgent(agent, effectiveTools)
 
 	for {
 		action := func() {
@@ -914,7 +915,7 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 		return runPrompt(ctx, provider, agent, mcpClients, tools, nil, messages, tweaker, isInteractive) // Pass empty prompt
 	}
 
-	*messages = agent.NormalizeHistory(*messages)
+	*messages = agent.NormalizeHistory(context.WithValue(ctx, "PromptRuntimeTweaks", tweaker), *messages)
 	lastMessage := (*messages)[len(*messages)-1]
 	if system.IsUserMessage(lastMessage) {
 		*messages = (*messages)[:len(*messages)-1]                                                                // cut last message
@@ -931,7 +932,18 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 	return nil
 }
 
-func FilterToolsWithTweaker(tweaker PromptRuntimeTweaks, tools []history.Tool, effectiveTools []history.Tool) []history.Tool {
+func filterToolsWithAgent(agent system.Agent, tools []history.Tool) []history.Tool {
+	et := agent.GetEnabledTools()
+	if et == nil {
+		return nil
+	}
+	var filteredTools []history.Tool
+	///
+	return filteredTools
+
+}
+
+func filterToolsWithTweaker(tweaker PromptRuntimeTweaks, tools []history.Tool, effectiveTools []history.Tool) []history.Tool {
 	if tweaker != nil { // tweaker might be nil if tracing is disabled (though NewDefaultPromptRuntimeTweaks("") handles it)
 		for _, tool := range tools {
 			// Ensure to use GetName() method from the llm.Tool interface
@@ -1637,7 +1649,11 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 
 	// Create the provider using the selected model ID
 	ctx := context.Background()
-	provider, err := createProvider(ctx, selectedModelID, agent.GetSystemPrompt(), loadedModelsConfig)
+	baseSystemPrompt := agent.GetSystemPrompt()
+	if agent.GetDownstreamAgents() != nil {
+		baseSystemPrompt += "\n" + generateDownstreamAgentPrompt(agent.GetDownstreamAgents())
+	}
+	provider, err := createProvider(ctx, selectedModelID, baseSystemPrompt, loadedModelsConfig)
 	if err != nil {
 		// Error from createProvider already includes modelID.
 		return "", "", fmt.Errorf("error creating provider (agent '%s', task '%s'): %w", agentName, taskForModelSelection, err)
@@ -1698,5 +1714,29 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	} else {
 		return "", jobIDForResult, fmt.Errorf("No final text response from assistant to print for non-interactive mode.")
 	}
+
+}
+
+func generateDownstreamAgentPrompt(agents []string) string {
+	retval := ""
+	for _, agent := range agents {
+		ag, err := LoadAgentByName(agent)
+		if err != nil {
+			log.Error("Error loading agent", "agent_name", agent, "error", err)
+			continue
+		}
+		intro := ag.GetIntroductionAsDownstreamAgent()
+		if intro == "" {
+			log.Error("Empty agent introduction (used as downstream agent)", "agent_name")
+		}
+		retval += "## @" + agent + "\n"
+		retval += intro + "\n"
+	}
+	if retval == "" {
+		return retval
+	}
+	return `\nHere are colleagues in this chat, you can refer to them with their names prefixed with "@"\n` +
+		retval +
+		"\n\n Please refer to one colleague at a time. \n"
 
 }
