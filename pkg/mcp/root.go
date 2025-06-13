@@ -894,22 +894,36 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
 						continue
 					}
-					// Create a fresh PromptContext for the peer agent instance
+					// Use createPromptContext to get provider and PromptContext for the peer agent instance
+					peerMessages := make([]history.HistoryMessage, 0)
 					peerTweaker := NewDefaultPromptRuntimeTweaks("", ref.AgentName)
-					peerPctx := NewPromptContext(
+					// Use the same model selection logic as in runMCPHost
+					taskForModelSelection := agi.GetTaskForModelSelection()
+					selectedModelID, err := selectModelForTask(taskForModelSelection, loadedModelsConfig)
+					if err != nil {
+						log.Error("Failed to select model for peer agent", "agent", ref.AgentName, "error", err)
+						continue
+					}
+					systemPrompt := createFullPrompt(agi)
+					provider, err, peerPctx, done := createPromptContext(
 						ctx.ctx,
+						"", // jobID not needed for peer
+						selectedModelID,
+						agi,
+						systemPrompt,
+						peerMessages,
+						peerTweaker,
 						McpClients,
 						AllTools,
-						agi,
-						nil,
-						peerTweaker,
-						false,
+						loadedModelsConfig,
 					)
-					// use createPromptContext() to get provider, too
+					if done || err != nil {
+						log.Error("Failed to create prompt context for peer agent", "agent", ref.AgentName, "error", err)
+						continue
+					}
 					ctx.peers[peerKey] = &PeerAgentInstance{
-						key:      ref.Key,
-						pctx:     peerPctx,
-						provider: provider,
+						key:  ref.Key,
+						pctx: peerPctx,
 					}
 				}
 			}
@@ -920,7 +934,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 					peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
 				}
 				if peer, ok := ctx.peers[peerKey]; ok {
-					runPromptIteration(peer.pctx)
+					runPromptIteration(peer.pctx, nil, nil)
 				}
 			}
 		}
