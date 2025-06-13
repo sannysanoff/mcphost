@@ -1794,8 +1794,18 @@ func createFullPrompt(agent system.Agent) string {
 	return baseSystemPrompt
 }
 
+import (
+	// ...existing imports...
+	"bytes"
+	"text/template"
+)
+
 func generateDownstreamAgentPrompt(agents []string) string {
-	retval := ""
+	type AgentIntro struct {
+		Name  string
+		Intro string
+	}
+	var agentIntros []AgentIntro
 	for _, agent := range agents {
 		ag, err := LoadAgentByName(agent)
 		if err != nil {
@@ -1806,14 +1816,34 @@ func generateDownstreamAgentPrompt(agents []string) string {
 		if intro == "" {
 			log.Error("Empty agent introduction (used as downstream agent)", "agent_name")
 		}
-		retval += "## @" + agent + "\n"
-		retval += intro + "\n"
+		agentIntros = append(agentIntros, AgentIntro{
+			Name:  agent,
+			Intro: intro,
+		})
 	}
-	if retval == "" {
-		return retval
+	if len(agentIntros) == 0 {
+		return ""
 	}
-	return `\nNB Here are colleagues in this chat, you can refer to them with their names prefixed with "@", you can follow up with detailed requests etc.\n` +
-		retval +
-		"\n\n Please refer only colleague at a time in your response. Put good efforts to delegate tasks to your colleagues. \n"
 
+	const tmplText = `
+NB Here are colleagues in this chat, you can refer to them with their names prefixed with "@", you can follow up with detailed requests etc.
+
+{{- range . }}
+## @{{ .Name }}
+{{ .Intro }}
+{{- end }}
+
+Please refer only colleague at a time in your response. Put good efforts to delegate tasks to your colleagues.
+`
+	tmpl, err := template.New("downstreamAgents").Parse(tmplText)
+	if err != nil {
+		log.Error("Failed to parse downstream agent prompt template", "error", err)
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, agentIntros); err != nil {
+		log.Error("Failed to execute downstream agent prompt template", "error", err)
+		return ""
+	}
+	return buf.String()
 }
