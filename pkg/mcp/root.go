@@ -17,6 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+	"text/template"
+
 	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/huh/spinner"
