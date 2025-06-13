@@ -547,8 +547,8 @@ func performActualToolCall(
 func callToolWithCache(
 	ctx context.Context,
 	mcpClient mcpclient.MCPClient,
-	fullToolName string, // serverName__toolName
-	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
+	fullToolName string,          // serverName__toolName
+	toolArgsJSON []byte,          // Marshalled arguments from toolCall.GetArguments()
 	precedingMessagesHash string, // Hash of the LLM input context
 	rateLimit time.Duration,
 	isInteractive bool,
@@ -617,8 +617,9 @@ func callToolWithCache(
 }
 
 type PeerAgentInstance struct {
-	key    string
-	pctx   *PromptContext
+	key      string
+	pctx     *PromptContext
+	provider history.Provider
 }
 
 type PromptContext struct {
@@ -894,25 +895,34 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						continue
 					}
 					// Create a fresh PromptContext for the peer agent instance
-					peerMessages := make([]history.HistoryMessage, 0)
 					peerTweaker := NewDefaultPromptRuntimeTweaks("", ref.AgentName)
 					peerPctx := NewPromptContext(
 						ctx.ctx,
 						McpClients,
 						AllTools,
 						agi,
-						&peerMessages,
+						nil,
 						peerTweaker,
-						ctx.isInteractive,
-						// peers map is initialized empty by NewPromptContext
+						false,
 					)
+					// use createPromptContext() to get provider, too
 					ctx.peers[peerKey] = &PeerAgentInstance{
-						key:  ref.Key,
-						pctx: peerPctx,
+						key:      ref.Key,
+						pctx:     peerPctx,
+						provider: provider,
 					}
 				}
 			}
 			// (Further logic for using the peer agent instance can be added here)
+			for _, ref := range parsed.Refs {
+				peerKey := ref.AgentName
+				if ref.Key != "" {
+					peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
+				}
+				if peer, ok := ctx.peers[peerKey]; ok {
+					runPromptIteration(peer.pctx)
+				}
+			}
 		}
 	}
 
