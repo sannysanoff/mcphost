@@ -806,6 +806,38 @@ func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, pro
 		return runSinglePromptIteration(ctx, provider, nil) // Pass empty prompt
 	}
 
+	for _, peerAgent := range ctx.agent.GetDownstreamAgents() {
+		for _, conte := range assistantMessage.Content {
+			ix := strings.Index(conte.Text, "@"+peerAgent)
+			if ix >= 0 {
+				remains := strings.TrimSpace(conte.Text[ix+len("@"+peerAgent):])
+				for len(remains) > 0 {
+					if remains[0] == ',' {
+						remains = remains[1:]
+					}
+					remains = strings.TrimSpace(remains)
+				}
+				if len(remains) > 0 {
+					ag, ok := ctx.peers[peerAgent]
+					if !ok {
+						agi, err := LoadAgentByName(peerAgent)
+						if err != nil {
+							log.Error("Failed to load agent", "agent", peerAgent, "error", err)
+							continue
+						}
+						ag = &PeerAgentInstance{
+							agent:    agi,
+							provider: nil,
+							messages: nil,
+						}
+						ctx.peers[peerAgent] = ag
+
+					}
+				}
+			}
+		}
+	}
+
 	*ctx.messages = ctx.agent.NormalizeHistory(context.WithValue(ctx.ctx, "PromptRuntimeTweaks", ctx.tweaker), *ctx.messages)
 	lastMessage := (*ctx.messages)[len(*ctx.messages)-1]
 	if system.IsUserMessage(lastMessage) {
