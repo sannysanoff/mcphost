@@ -14,9 +14,9 @@ import (
 	"math/rand" // Added for random number generation
 	"os"
 	"path/filepath" // Added for path manipulation
+	"regexp"
 	"strings"
 	"time"
-	"regexp"
 
 	"bytes"
 	"text/template"
@@ -547,8 +547,8 @@ func performActualToolCall(
 func callToolWithCache(
 	ctx context.Context,
 	mcpClient mcpclient.MCPClient,
-	fullToolName string,          // serverName__toolName
-	toolArgsJSON []byte,          // Marshalled arguments from toolCall.GetArguments()
+	fullToolName string, // serverName__toolName
+	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
 	precedingMessagesHash string, // Hash of the LLM input context
 	rateLimit time.Duration,
 	isInteractive bool,
@@ -735,7 +735,7 @@ func ParseAgentReferences(text string, downstreamAgents []string) AgentReference
 	}
 }
 
-func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, prompt *history.HistoryMessage) error {
+func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *history.HistoryMessage) error {
 	// Display the user's prompt if it's not empty and in interactive mode
 	if prompt != nil && ctx.isInteractive {
 		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt.GetContent()))
@@ -872,7 +872,7 @@ func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, pro
 		}
 		// Make another call to the LLM with the tool results
 		// Pass the tweaker and isInteractive flags down
-		return runSinglePromptIteration(ctx, provider, nil) // Pass empty prompt
+		return runPromptIteration(ctx, provider, nil) // Pass empty prompt
 	}
 
 	// --- Refactored agent reference parsing ---
@@ -883,32 +883,44 @@ func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, pro
 			continue
 		}
 		parsed := ParseAgentReferences(conte.Text, downstreamAgents)
-		for _, ref := range parsed.Refs {
-			peerKey := ref.AgentName
-			if ref.Key != "" {
-				peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
-			}
-			if _, ok := ctx.peers[peerKey]; !ok {
-				agi, err := LoadAgentByName(ref.AgentName)
-				if err != nil {
-					log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
-					continue
+		if parsed.Refs != nil {
+			for _, ref := range parsed.Refs {
+				peerKey := ref.AgentName
+				if ref.Key != "" {
+					peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
 				}
-				ctx.peers[peerKey] = &PeerAgentInstance{
-					agent:    agi,
-					provider: nil,
-					messages: nil,
-					key:      ref.Key,
+				if _, ok := ctx.peers[peerKey]; !ok {
+					agi, err := LoadAgentByName(ref.AgentName)
+					if err != nil {
+						log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
+						continue
+					}
+					ctx.peers[peerKey] = &PeerAgentInstance{
+						agent:    agi,
+						provider: nil,
+						messages: nil,
+						key:      ref.Key,
+					}
 				}
 			}
+
+			for _, ref := range parsed.Refs {
+				peerKey := ref.AgentName
+				if ainst, ok := ctx.peers[peerKey]; ok {
+					ainst.agent.
+				}
+			}
+
+
+
 		}
 	}
 
 	*ctx.messages = ctx.agent.NormalizeHistory(context.WithValue(ctx.ctx, "PromptRuntimeTweaks", ctx.tweaker), *ctx.messages)
 	lastMessage := (*ctx.messages)[len(*ctx.messages)-1]
 	if system.IsUserMessage(lastMessage) {
-		*ctx.messages = (*ctx.messages)[:len(*ctx.messages)-1]       // cut last message
-		return runSinglePromptIteration(ctx, provider, &lastMessage) // Pass empty prompt
+		*ctx.messages = (*ctx.messages)[:len(*ctx.messages)-1] // cut last message
+		return runPromptIteration(ctx, provider, &lastMessage) // Pass empty prompt
 	}
 
 	if ctx.tweaker != nil {
@@ -1201,8 +1213,8 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 
 	// Initialize PromptRuntimeTweaks with the trace path for CLI mode
 	cliTweaker := NewDefaultPromptRuntimeTweaks("", agentNameFlag)
-	// The tweaker is now passed as a direct argument to runSinglePromptIteration,
-	// so setting it in context here is not strictly necessary for runSinglePromptIteration itself,
+	// The tweaker is now passed as a direct argument to runPromptIteration,
+	// so setting it in context here is not strictly necessary for runPromptIteration itself,
 	// but other functions might still expect it if not refactored.
 	// For now, keep it in context for broader compatibility during refactoring.
 	ctx = context.WithValue(ctx, PromptRuntimeTweaksKey, cliTweaker)
@@ -1212,11 +1224,11 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		// Non-interactive mode: process the single prompt and exit
 		log.Info("Running in non-interactive mode with provided user prompt.", "prompt", userPromptCLI)
 
-		// runSinglePromptIteration with isInteractive=false will use logging for output.
+		// runPromptIteration with isInteractive=false will use logging for output.
 		// It modifies 'messages' in place.
-		err := runSinglePromptIteration(pctx, provider, history.NewUserMessage(userPromptCLI))
+		err := runPromptIteration(pctx, provider, history.NewUserMessage(userPromptCLI))
 		if err != nil {
-			// Error is already logged by runSinglePromptIteration or its callees.
+			// Error is already logged by runPromptIteration or its callees.
 			// Return the error to indicate failure to the main Execute function.
 			return fmt.Errorf("error processing non-interactive prompt: %w", err)
 		}
@@ -1294,9 +1306,9 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 			messages = pruneMessages(messages)
 		}
 		// Pass cliTweaker and true for isInteractive
-		err = runSinglePromptIteration(pctx, provider, history.NewUserMessage(prompt))
+		err = runPromptIteration(pctx, provider, history.NewUserMessage(prompt))
 		if err != nil {
-			log.Error("Error from runSinglePromptIteration in interactive mode", "error", err)
+			log.Error("Error from runPromptIteration in interactive mode", "error", err)
 			fmt.Printf("\n%s\n", errorStyle.Render(fmt.Sprintf("Error: %v", err)))
 			// Continue loop in interactive mode even after an error.
 		}
@@ -1679,11 +1691,28 @@ func processJob(jobCtx context.Context, jobID string, modelToUse string, agent s
 	// systemPromptToUse can be an empty string if no system message was provided in the request.
 	// The loadSystemPrompt(systemPromptFile) is not used here as the prompt comes from the request.
 
+	provider, err, pctx, done := createPromptContext(jobCtx, jobID, modelToUse, agent, systemPromptToUse, messages, tweaker, mcpClients, allTools, modelsCfg)
+	if done {
+		return
+	}
+	err = runPromptIteration(pctx, provider, history.NewUserMessage("")) // isInteractive is false
+
+	if err != nil {
+		log.Error("Job: Error during LLM interaction", "job_id", jobID, "error", err)
+		recordJobError(jobID, messages, tweaker, fmt.Errorf("error during LLM interaction: %w", err))
+		return
+	}
+
+	log.Info("Job processing completed successfully", "job_id", jobID)
+	// Final state is recorded by runPromptIteration's calls to tweaker.
+}
+
+func createPromptContext(jobCtx context.Context, jobID string, modelToUse string, agent system.Agent, systemPromptToUse string, messages []history.HistoryMessage, tweaker PromptRuntimeTweaks, mcpClients map[string]mcpclient.MCPClient, allTools []history.Tool, modelsCfg *ModelsConfig) (history.Provider, error, *PromptContext, bool) {
 	provider, err := createProvider(jobCtx, modelToUse, systemPromptToUse, modelsCfg) // Pass modelsCfg
 	if err != nil {
 		log.Error("Job: Error creating provider", "job_id", jobID, "model_id", modelToUse, "error", err)
 		recordJobError(jobID, messages, tweaker, fmt.Errorf("error creating provider for model ID %s: %w", modelToUse, err))
-		return
+		return nil, nil, nil, true
 	}
 	log.Info("Job: Provider and model loaded", "job_id", jobID, "providerType", provider.Name(), "modelID", modelToUse)
 
@@ -1694,23 +1723,14 @@ func processJob(jobCtx context.Context, jobID string, modelToUse string, agent s
 	// --- End Environment Setup ---
 
 	// The initial `messages` are already recorded by handleStartJob.
-	// The `runSinglePromptIteration` function expects the `prompt` string to be the *newest* user message text.
+	// The `runPromptIteration` function expects the `prompt` string to be the *newest* user message text.
 	// Since `messages` already contains the full history (including the latest user turn from YAML),
-	// the `prompt` string for `runSinglePromptIteration` should be empty.
+	// the `prompt` string for `runPromptIteration` should be empty.
 
-	// The `runSinglePromptIteration` function will append new messages (assistant, tool_use, tool_result)
+	// The `runPromptIteration` function will append new messages (assistant, tool_use, tool_result)
 	// to the `messages` slice passed by address.
 	pctx := NewPromptContext(jobCtx, McpClients, AllTools, agent, &messages, tweaker, false)
-	err = runSinglePromptIteration(pctx, provider, history.NewUserMessage("")) // isInteractive is false
-
-	if err != nil {
-		log.Error("Job: Error during LLM interaction", "job_id", jobID, "error", err)
-		recordJobError(jobID, messages, tweaker, fmt.Errorf("error during LLM interaction: %w", err))
-		return
-	}
-
-	log.Info("Job processing completed successfully", "job_id", jobID)
-	// Final state is recorded by runSinglePromptIteration's calls to tweaker.
+	return provider, err, pctx, false
 }
 
 func recordJobError(jobID string, messages []history.HistoryMessage, tweaker PromptRuntimeTweaks, jobErr error) {
@@ -1798,14 +1818,14 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	// Example: subAgentTweaker := NewDefaultPromptRuntimeTweaks(filepath.Join(TracesDir, fmt.Sprintf("%s_sub.yaml", subAgentTweaker.JobId)))
 	// For simplicity, using default trace path generation within NewDefaultPromptRuntimeTweaks.
 
-	// runSinglePromptIteration with isInteractive=false will use logging for output.
+	// runPromptIteration with isInteractive=false will use logging for output.
 	// It modifies 'messages' in place.
 	// The prompt string itself becomes the content of the first user message.
 	initialUserMessage := history.NewUserMessage(prompt)
 	pctx := NewPromptContext(ctx, McpClients, AllTools, agent, &messages, subAgentTweaker, false)
-	err = runSinglePromptIteration(pctx, provider, initialUserMessage)
+	err = runPromptIteration(pctx, provider, initialUserMessage)
 	if err != nil {
-		// Error is already logged by runSinglePromptIteration or its callees.
+		// Error is already logged by runPromptIteration or its callees.
 		// Return the error to indicate failure to the main Execute function.
 		return "", subAgentTweaker.JobId, fmt.Errorf("error processing non-interactive prompt: %w", err)
 	}
@@ -1835,7 +1855,7 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	jobIDForResult := ""
 	// This part assumes subAgentTweaker is in scope and was initialized.
 	// Based on the previous change, subAgentTweaker should be available.
-	// If subAgentTweaker was passed as nil to runSinglePromptIteration (as in original code), this would need adjustment.
+	// If subAgentTweaker was passed as nil to runPromptIteration (as in original code), this would need adjustment.
 	// However, the request is to *implement* jobTweaker, so we assume it's now non-nil.
 	// Let's assume subAgentTweaker is the one created and used.
 	// The variable `subAgentTweaker` was defined in the previous block.
