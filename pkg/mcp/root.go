@@ -646,6 +646,26 @@ func NewPromptContext(ctx context.Context, mcpClients map[string]mcpclient.MCPCl
 }
 
 // Method implementations for simpleMessage
+func assignAndRecord(ctx *PromptContext, msg *history.HistoryMessage, label string) {
+	if ctx.tweaker != nil {
+		ctx.tweaker.AssignIDsToNewMessage(msg, *ctx.messages)
+	}
+	*ctx.messages = append(*ctx.messages, *msg)
+	if ctx.tweaker != nil && label != "" {
+		if err := ctx.tweaker.RecordState(*ctx.messages, label); err != nil {
+			log.Error("Failed to record trace", "label", label, "error", err)
+		}
+	}
+}
+
+func assignAndRecordPtr(ctx *PromptContext, msg *history.HistoryMessage, label string) {
+	assignAndRecord(ctx, msg, label)
+}
+
+func assignAndRecordVal(ctx *PromptContext, msg history.HistoryMessage, label string) {
+	assignAndRecord(ctx, &msg, label)
+}
+
 func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, prompt *history.HistoryMessage) error {
 	// Display the user's prompt if it's not empty and in interactive mode
 	if prompt != nil && ctx.isInteractive {
@@ -727,19 +747,7 @@ func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, pro
 		//
 		// INITIAL ENTRY
 		//
-		userMessage := prompt
-		if ctx.tweaker != nil {
-			ctx.tweaker.AssignIDsToNewMessage(userMessage, *ctx.messages)
-		}
-		*ctx.messages = append(*ctx.messages, *userMessage) // Add user's current prompt to the main history slice
-
-		if ctx.tweaker != nil {
-			// Record state *after* adding the user message
-			if err := ctx.tweaker.RecordState(*ctx.messages, "user_prompt_sent"); err != nil {
-				log.Error("Failed to record trace after user prompt was sent", "error", err)
-				// Continue execution even if tracing fails
-			}
-		}
+		assignAndRecordPtr(ctx, prompt, "user_prompt_sent")
 	}
 
 	// Assistant's turn to respond, prepare its message structure
@@ -785,33 +793,13 @@ func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, pro
 
 	// Add the assistant's message (text and tool_use calls) to history
 	if len(assistantMessage.Content) > 0 {
-		if ctx.tweaker != nil {
-			ctx.tweaker.AssignIDsToNewMessage(&assistantMessage, *ctx.messages)
-		}
-		*ctx.messages = append(*ctx.messages, assistantMessage)
-		if ctx.tweaker != nil {
-			if err := ctx.tweaker.RecordState(*ctx.messages, "assistant_response_and_tool_calls"); err != nil {
-				log.Error("Failed to record trace after assistant response", "error", err)
-			}
-		}
-
+		assignAndRecordPtr(ctx, &assistantMessage, "assistant_response_and_tool_calls")
 	}
 
 	// Add all tool responses to history and record state after each
 	if len(toolCallResponses) > 0 {
 		for _, toolRespMsg := range toolCallResponses {
-			if ctx.tweaker != nil {
-				// Assign IDs to each tool response message before appending
-				// Note: The previous message ID will link to the last thing added to *messages,
-				// which could be the assistant's message or a prior tool response.
-				ctx.tweaker.AssignIDsToNewMessage(&toolRespMsg, *ctx.messages)
-			}
-			*ctx.messages = append(*ctx.messages, toolRespMsg) // Add tool response to the main history
-			if ctx.tweaker != nil {
-				if err := ctx.tweaker.RecordState(*ctx.messages, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID())); err != nil { // GetToolResponseID might need to be robust if ID is not set
-					log.Error("Failed to record trace after tool response", "tool_id", toolRespMsg.GetToolResponseID(), "error", err)
-				}
-			}
+			assignAndRecordVal(ctx, toolRespMsg, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID()))
 		}
 		// Make another call to the LLM with the tool results
 		// Pass the tweaker and isInteractive flags down
