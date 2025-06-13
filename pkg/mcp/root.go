@@ -612,10 +612,40 @@ func callToolWithCache(
 	return toolResult, nil
 }
 
+type PeerAgentInstance struct {
+	agent    system.Agent
+	provider history.Provider
+	messages *[]history.HistoryMessage
+}
+
+type PromptContext struct {
+	ctx           context.Context
+	mcpClients    map[string]mcpclient.MCPClient // unfiltered
+	tools         []history.Tool                 // unfiltered
+	agent         system.Agent
+	messages      *[]history.HistoryMessage
+	tweaker       PromptRuntimeTweaks
+	isInteractive bool
+	peers         map[string]*PeerAgentInstance
+}
+
+func NewPromptContext(ctx context.Context, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, agent system.Agent, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) *PromptContext {
+	return &PromptContext{
+		ctx:           ctx,
+		mcpClients:    mcpClients,
+		tools:         tools,
+		agent:         agent,
+		messages:      messages,
+		tweaker:       tweaker,
+		isInteractive: isInteractive,
+		peers:         make(map[string]*PeerAgentInstance),
+	}
+}
+
 // Method implementations for simpleMessage
-func runPrompt(ctx context.Context, provider history.Provider, agent system.Agent, mcpClients map[string]mcpclient.MCPClient, tools []history.Tool, prompt *history.HistoryMessage, messages *[]history.HistoryMessage, tweaker PromptRuntimeTweaks, isInteractive bool) error {
+func runPrompt(ctx *PromptContext, provider history.Provider, prompt *history.HistoryMessage) error {
 	// Display the user's prompt if it's not empty and in interactive mode
-	if prompt != nil && isInteractive {
+	if prompt != nil && ctx.isInteractive {
 		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt.GetContent()))
 	}
 	var message history.Message
@@ -625,9 +655,9 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 
 	// Convert MessageParam to llm.Message for provider.
 	// These llmMessages represent the history *before* the current `prompt` string.
-	llmMessages := make([]history.Message, len(*messages))
-	for i := range *messages {
-		llmMessages[i] = &(*messages)[i]
+	llmMessages := make([]history.Message, len(*ctx.messages))
+	for i := range *ctx.messages {
+		llmMessages[i] = &(*ctx.messages)[i]
 	}
 
 	// Calculate hash of this history, this is the context for the upcoming LLM call, used for tool caching.
@@ -635,8 +665,8 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 
 	log.Debug("Using provided PromptRuntimeTweaks for tool filtering and tracing")
 
-	var effectiveTools []history.Tool = filterToolsWithTweaker(tweaker, tools, nil)
-	effectiveTools = filterToolsWithAgent(agent, effectiveTools)
+	var effectiveTools []history.Tool = filterToolsWithTweaker(ctx.tweaker, ctx.tools, nil)
+	effectiveTools = filterToolsWithAgent(ctx.agent, effectiveTools)
 
 	for {
 		action := func() {
@@ -646,14 +676,14 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 			}
 			// Use the caching wrapper function
 			message, err = createMessageWithCache(
-				ctx,
+				ctx.ctx,
 				provider,
 				reqPrompt,
 				llmMessages,
 				effectiveTools,
 			)
 		}
-		if isInteractive {
+		if ctx.isInteractive {
 			_ = spinner.New().Title("Thinking...").Action(action).Run()
 		} else {
 			action() // Run directly without spinner
@@ -693,14 +723,14 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 		userMessage := prompt
 		// *messages here is the history *before* this userMessage.
 		// tweaker.AssignIDsToNewMessage will correctly link it.
-		if tweaker != nil {
-			tweaker.AssignIDsToNewMessage(userMessage, *messages)
+		if ctx.tweaker != nil {
+			ctx.tweaker.AssignIDsToNewMessage(userMessage, *ctx.messages)
 		}
-		*messages = append(*messages, *userMessage) // Add user's current prompt to the main history slice
+		*ctx.messages = append(*ctx.messages, *userMessage) // Add user's current prompt to the main history slice
 
-		if tweaker != nil {
+		if ctx.tweaker != nil {
 			// Record state *after* adding the user message
-			if err := tweaker.RecordState(*messages, "user_prompt_sent"); err != nil {
+			if err := ctx.tweaker.RecordState(*ctx.messages, "user_prompt_sent"); err != nil {
 				log.Error("Failed to record trace after user prompt was sent", "error", err)
 				// Continue execution even if tracing fails
 			}
@@ -715,7 +745,7 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 
 	// Handle the message response (text part)
 	if message.GetContent() != "" {
-		if isInteractive {
+		if ctx.isInteractive {
 			if renderer == nil { // Ensure renderer is initialized for interactive mode
 				if err := updateRenderer(); err != nil {
 					log.Warn("Failed to update renderer, continuing without styled output", "error", err)
@@ -778,7 +808,7 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 		if len(parts) != 2 {
 			errMsg := fmt.Sprintf("Error: Invalid tool name format: %s", toolCall.GetName())
 			log.Error(errMsg)
-			if isInteractive {
+			if ctx.isInteractive {
 				fmt.Printf("\n%s\n", errorStyle.Render(errMsg))
 			}
 			// Add error as tool result? Or skip? For now, skip.
@@ -786,11 +816,11 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 		}
 
 		serverName, _ := parts[0], parts[1] // toolName assigned to _
-		mcpClient, ok := mcpClients[serverName]
+		mcpClient, ok := ctx.mcpClients[serverName]
 		if !ok {
 			errMsg := fmt.Sprintf("Error: Server not found for tool: %s (server: %s)", toolCall.GetName(), serverName)
 			log.Error(errMsg)
-			if isInteractive {
+			if ctx.isInteractive {
 				fmt.Printf("\n%s\n", errorStyle.Render(errMsg))
 			}
 			continue
@@ -812,14 +842,14 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 		// Call tool using the caching wrapper
 		// inputBytes are the marshalled tool arguments.
 		// llmCallHistoryHashForToolCache was computed earlier.
-		toolResultPtr, err := callToolWithCache(ctx, mcpClient, toolCall.GetName(), inputBytes, llmCallHistoryHashForToolCache, rateLimit, isInteractive)
+		toolResultPtr, err := callToolWithCache(ctx.ctx, mcpClient, toolCall.GetName(), inputBytes, llmCallHistoryHashForToolCache, rateLimit, ctx.isInteractive)
 
 		if err != nil {
 			// err already contains tool name if it comes from performActualToolCall or mcpClient.CallTool
 			// For consistency, format it like existing error messages if needed, or rely on callToolWithCache's logging.
 			errMsg := fmt.Sprintf("Error during tool call for %s (ID: %s): %v", toolCall.GetName(), toolCall.GetID(), err)
 			log.Error(errMsg)
-			if isInteractive {
+			if ctx.isInteractive {
 				fmt.Printf("\n%s\n", errorStyle.Render(errMsg))
 			}
 
@@ -883,13 +913,45 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 
 	// Add the assistant's message (text and tool_use calls) to history
 	if len(assistantMessage.Content) > 0 {
-		if tweaker != nil {
-			tweaker.AssignIDsToNewMessage(&assistantMessage, *messages)
+		if ctx.tweaker != nil {
+			ctx.tweaker.AssignIDsToNewMessage(&assistantMessage, *ctx.messages)
 		}
-		*messages = append(*messages, assistantMessage)
-		if tweaker != nil {
-			if err := tweaker.RecordState(*messages, "assistant_response_and_tool_calls"); err != nil {
+		*ctx.messages = append(*ctx.messages, assistantMessage)
+		if ctx.tweaker != nil {
+			if err := ctx.tweaker.RecordState(*ctx.messages, "assistant_response_and_tool_calls"); err != nil {
 				log.Error("Failed to record trace after assistant response", "error", err)
+			}
+		}
+
+		for _, peerAgent := range ctx.agent.GetDownstreamAgents() {
+			for _, conte := range assistantMessage.Content {
+				ix := strings.Index(conte.Text, "@"+peerAgent)
+				if ix >= 0 {
+					remains := strings.TrimSpace(conte.Text[ix+len("@"+peerAgent):])
+					for len(remains) > 0 {
+						if remains[0] == ',' {
+							remains = remains[1:]
+						}
+						remains = strings.TrimSpace(remains)
+					}
+					if len(remains) > 0 {
+						ag, ok := ctx.peers[peerAgent]
+						if (!ok){
+							agi, err := LoadAgentByName(peerAgent)
+							if err != nil {
+								log.Error("Failed to load agent", "agent", peerAgent, "error", err)
+								continue;
+							}
+							ag = &PeerAgentInstance{
+								agent:    agi,
+								provider:
+								messages: nil,
+							}
+							ctx.peers[peerAgent] = ag
+
+						}
+					}
+				}
 			}
 		}
 	}
@@ -897,36 +959,36 @@ func runPrompt(ctx context.Context, provider history.Provider, agent system.Agen
 	// Add all tool responses to history and record state after each
 	if len(toolCallResponses) > 0 {
 		for _, toolRespMsg := range toolCallResponses {
-			if tweaker != nil {
+			if ctx.tweaker != nil {
 				// Assign IDs to each tool response message before appending
 				// Note: The previous message ID will link to the last thing added to *messages,
 				// which could be the assistant's message or a prior tool response.
-				tweaker.AssignIDsToNewMessage(&toolRespMsg, *messages)
+				ctx.tweaker.AssignIDsToNewMessage(&toolRespMsg, *ctx.messages)
 			}
-			*messages = append(*messages, toolRespMsg) // Add tool response to the main history
-			if tweaker != nil {
-				if err := tweaker.RecordState(*messages, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID())); err != nil { // GetToolResponseID might need to be robust if ID is not set
+			*ctx.messages = append(*ctx.messages, toolRespMsg) // Add tool response to the main history
+			if ctx.tweaker != nil {
+				if err := ctx.tweaker.RecordState(*ctx.messages, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID())); err != nil { // GetToolResponseID might need to be robust if ID is not set
 					log.Error("Failed to record trace after tool response", "tool_id", toolRespMsg.GetToolResponseID(), "error", err)
 				}
 			}
 		}
 		// Make another call to the LLM with the tool results
 		// Pass the tweaker and isInteractive flags down
-		return runPrompt(ctx, provider, agent, mcpClients, tools, nil, messages, tweaker, isInteractive) // Pass empty prompt
+		return runPrompt(ctx, provider, nil) // Pass empty prompt
 	}
 
-	*messages = agent.NormalizeHistory(context.WithValue(ctx, "PromptRuntimeTweaks", tweaker), *messages)
-	lastMessage := (*messages)[len(*messages)-1]
+	*ctx.messages = ctx.agent.NormalizeHistory(context.WithValue(ctx.ctx, "PromptRuntimeTweaks", ctx.tweaker), *ctx.messages)
+	lastMessage := (*ctx.messages)[len(*ctx.messages)-1]
 	if system.IsUserMessage(lastMessage) {
-		*messages = (*messages)[:len(*messages)-1]                                                                // cut last message
-		return runPrompt(ctx, provider, agent, mcpClients, tools, &lastMessage, messages, tweaker, isInteractive) // Pass empty prompt
+		*ctx.messages = (*ctx.messages)[:len(*ctx.messages)-1] // cut last message
+		return runPrompt(ctx, provider, &lastMessage)          // Pass empty prompt
 	}
 
-	if tweaker != nil {
-		tweaker.RecordState(*messages, "final_save")
+	if ctx.tweaker != nil {
+		ctx.tweaker.RecordState(*ctx.messages, "final_save")
 	}
 
-	if isInteractive {
+	if ctx.isInteractive {
 		fmt.Println() // Add spacing
 	}
 	return nil
@@ -1036,7 +1098,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	}
 	log.Info("Loaded agent for CLI mode", "agent", agent.Filename())
 
-	systemPrompt := agent.GetSystemPrompt()
+	systemPrompt := createFullPrompt(agent)
 	taskForModelSelection := agent.GetTaskForModelSelection()
 	log.Info("Agent details for CLI mode", "systemPromptProvided", systemPrompt != "", "taskForModelSelection", taskForModelSelection)
 
@@ -1080,13 +1142,14 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	// For now, keep it in context for broader compatibility during refactoring.
 	ctx = context.WithValue(ctx, PromptRuntimeTweaksKey, cliTweaker)
 
+	pctx := NewPromptContext(ctx, McpClients, AllTools, agent, &messages, cliTweaker, false)
 	if userPromptCLI != "" {
 		// Non-interactive mode: process the single prompt and exit
 		log.Info("Running in non-interactive mode with provided user prompt.", "prompt", userPromptCLI)
 
 		// runPrompt with isInteractive=false will use logging for output.
 		// It modifies 'messages' in place.
-		err := runPrompt(ctx, provider, agent, McpClients, AllTools, history.NewUserMessage(userPromptCLI), &messages, cliTweaker, false)
+		err := runPrompt(pctx, provider, history.NewUserMessage(userPromptCLI))
 		if err != nil {
 			// Error is already logged by runPrompt or its callees.
 			// Return the error to indicate failure to the main Execute function.
@@ -1166,7 +1229,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 			messages = pruneMessages(messages)
 		}
 		// Pass cliTweaker and true for isInteractive
-		err = runPrompt(ctx, provider, agent, McpClients, AllTools, history.NewUserMessage(prompt), &messages, cliTweaker, true)
+		err = runPrompt(pctx, provider, history.NewUserMessage(prompt))
 		if err != nil {
 			log.Error("Error from runPrompt in interactive mode", "error", err)
 			fmt.Printf("\n%s\n", errorStyle.Render(fmt.Sprintf("Error: %v", err)))
@@ -1572,7 +1635,8 @@ func processJob(jobCtx context.Context, jobID string, modelToUse string, agent s
 
 	// The `runPrompt` function will append new messages (assistant, tool_use, tool_result)
 	// to the `messages` slice passed by address.
-	err = runPrompt(jobCtx, provider, agent, mcpClients, allTools, history.NewUserMessage(""), &messages, tweaker, false) // isInteractive is false
+	pctx := NewPromptContext(jobCtx, McpClients, AllTools, agent, &messages, tweaker, false)
+	err = runPrompt(pctx, provider, history.NewUserMessage("")) // isInteractive is false
 
 	if err != nil {
 		log.Error("Job: Error during LLM interaction", "job_id", jobID, "error", err)
@@ -1656,10 +1720,7 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 
 	// Create the provider using the selected model ID
 	ctx := context.Background()
-	baseSystemPrompt := agent.GetSystemPrompt()
-	if agent.GetDownstreamAgents() != nil {
-		baseSystemPrompt += "\n" + generateDownstreamAgentPrompt(agent.GetDownstreamAgents())
-	}
+	baseSystemPrompt := createFullPrompt(agent)
 	provider, err := createProvider(ctx, selectedModelID, baseSystemPrompt, loadedModelsConfig)
 	if err != nil {
 		// Error from createProvider already includes modelID.
@@ -1676,7 +1737,8 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 	// It modifies 'messages' in place.
 	// The prompt string itself becomes the content of the first user message.
 	initialUserMessage := history.NewUserMessage(prompt)
-	err = runPrompt(ctx, provider, agent, McpClients, AllTools, initialUserMessage, &messages, subAgentTweaker, false)
+	pctx := NewPromptContext(ctx, McpClients, AllTools, agent, &messages, subAgentTweaker, false)
+	err = runPrompt(pctx, provider, initialUserMessage)
 	if err != nil {
 		// Error is already logged by runPrompt or its callees.
 		// Return the error to indicate failure to the main Execute function.
@@ -1724,6 +1786,14 @@ func RunSubAgent(agentName string, prompt string) (string, string, error) {
 
 }
 
+func createFullPrompt(agent system.Agent) string {
+	baseSystemPrompt := agent.GetSystemPrompt()
+	if agent.GetDownstreamAgents() != nil {
+		baseSystemPrompt += "\n" + generateDownstreamAgentPrompt(agent.GetDownstreamAgents())
+	}
+	return baseSystemPrompt
+}
+
 func generateDownstreamAgentPrompt(agents []string) string {
 	retval := ""
 	for _, agent := range agents {
@@ -1742,8 +1812,8 @@ func generateDownstreamAgentPrompt(agents []string) string {
 	if retval == "" {
 		return retval
 	}
-	return `\nHere are colleagues in this chat, you can refer to them with their names prefixed with "@"\n` +
+	return `\nNB Here are colleagues in this chat, you can refer to them with their names prefixed with "@", you can follow up with detailed requests etc.\n` +
 		retval +
-		"\n\n Please refer to one colleague at a time. \n"
+		"\n\n Please refer only colleague at a time in your response. Put good efforts to delegate tasks to your colleagues. \n"
 
 }
