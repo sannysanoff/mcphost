@@ -1128,7 +1128,15 @@ func filterToolsWithAgent(agent system.Agent, tools []history.Tool) []history.To
 			filteredTools = append(filteredTools, tool)
 		} else {
 			tool0 := strings.Split(tool.Name, "__")[0]
-			if _, ok = enabledSet[tool0]; ok && !slices.Contains(filteredTools, tool) {
+			// Since history.Tool is not comparable, use a manual check for existence
+			alreadyIncluded := false
+			for _, t := range filteredTools {
+				if t.Name == tool.Name && t.Description == tool.Description {
+					alreadyIncluded = true
+					break
+				}
+			}
+			if _, ok = enabledSet[tool0]; ok && !alreadyIncluded {
 				filteredTools = append(filteredTools, tool)
 			}
 		}
