@@ -944,7 +944,7 @@ func runPrompt(ctx *PromptContext, provider history.Provider, prompt *history.Hi
 							}
 							ag = &PeerAgentInstance{
 								agent:    agi,
-								provider:
+								provider: nil,
 								messages: nil,
 							}
 							ctx.peers[peerAgent] = ag
@@ -1795,7 +1795,6 @@ func createFullPrompt(agent system.Agent) string {
 }
 
 import (
-	// ...existing imports...
 	"bytes"
 	"text/template"
 )
