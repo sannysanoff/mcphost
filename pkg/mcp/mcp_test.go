@@ -17,7 +17,8 @@ func TestMainEntryPoint(t *testing.T) {
 	mockProvider, mcpClients, allTools, msgs := MakeBratislavaMock(t)
 	agent, err := LoadAgentByName("default")
 	require.NotNil(t, err)
-	err = runPromptIteration(currentJobCtx, mockProvider, agent, mcpClients, allTools, history.NewUserMessage("what_time_in_bratislava"), &msgs, nil, false)
+	pctx := NewPromptContext(currentJobCtx, mcpClients, allTools, agent, &msgs, nil, false)
+	err = runPromptIteration(pctx, mockProvider, history.NewUserMessage("what_time_in_bratislava"))
 	require.Nil(t, err)
 }
 
@@ -32,7 +33,8 @@ func TestDistrustfulResearcher(t *testing.T) {
 	//agents.DistrustfulResearcherNew()
 	agent, err := LoadAgentByName("distrustful_researcher")
 	require.Nil(t, err)
-	err = runPromptIteration(currentJobCtx, mockProvider, agent, mcpClients, allTools, history.NewUserMessage("what_time_in_bratislava"), &msgs, nil, false)
+	pctx := NewPromptContext(currentJobCtx, mcpClients, allTools, agent, &msgs, nil, false)
+	err = runPromptIteration(pctx, mockProvider, history.NewUserMessage("what_time_in_bratislava"))
 	require.Nil(t, err)
 }
 
