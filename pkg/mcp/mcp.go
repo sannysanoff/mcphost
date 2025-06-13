@@ -221,92 +221,111 @@ func createMCPClients(
 	config *MCPConfig,
 ) (map[string]mcpclient.MCPClient, error) {
 	clients := make(map[string]mcpclient.MCPClient)
+	type result struct {
+		name   string
+		client mcpclient.MCPClient
+		err    error
+	}
+	resultsCh := make(chan result, len(config.MCPServers))
 
 	for name, server := range config.MCPServers {
-		var client mcpclient.MCPClient
-		var err error
+		go func(name string, server ServerConfigWrapper) {
+			var client mcpclient.MCPClient
+			var err error
 
-		if server.Config.GetType() == transportSSE {
-			sseConfig := server.Config.(SSEServerConfig)
+			if server.Config.GetType() == transportSSE {
+				sseConfig := server.Config.(SSEServerConfig)
 
-			options := []mcpclient.ClientOption{}
+				options := []mcpclient.ClientOption{}
 
-			if sseConfig.Headers != nil {
-				// Parse headers from the config
-				headers := make(map[string]string)
-				for _, header := range sseConfig.Headers {
-					parts := strings.SplitN(header, ":", 2)
-					if len(parts) == 2 {
-						key := strings.TrimSpace(parts[0])
-						value := strings.TrimSpace(parts[1])
-						headers[key] = value
+				if sseConfig.Headers != nil {
+					// Parse headers from the config
+					headers := make(map[string]string)
+					for _, header := range sseConfig.Headers {
+						parts := strings.SplitN(header, ":", 2)
+						if len(parts) == 2 {
+							key := strings.TrimSpace(parts[0])
+							value := strings.TrimSpace(parts[1])
+							headers[key] = value
+						}
 					}
+					options = append(options, mcpclient.WithHeaders(headers))
 				}
-				options = append(options, mcpclient.WithHeaders(headers))
+
+				client, err = mcpclient.NewSSEMCPClient(
+					sseConfig.Url,
+					options...,
+				)
+				if err == nil {
+					err = client.(*mcpclient.SSEMCPClient).Start(context.Background())
+				}
+			} else {
+				stdioConfig := server.Config.(STDIOServerConfig)
+				var env []string
+				for k, v := range stdioConfig.Env {
+					env = append(env, fmt.Sprintf("%s=%s", k, v))
+				}
+				baseClient, err2 := mcpclient.NewStdioMCPClient(
+					stdioConfig.Command,
+					env,
+					stdioConfig.Args...)
+				if err2 == nil {
+					// Wrap the client to include config
+					client = &configurableMCPClient{
+						MCPClient: baseClient,
+						config:    stdioConfig,
+					}
+				} else {
+					err = err2
+				}
+			}
+			if err != nil {
+				resultsCh <- result{name: name, client: nil, err: fmt.Errorf("failed to create MCP client for %s: %w", name, err)}
+				return
 			}
 
-			client, err = mcpclient.NewSSEMCPClient(
-				sseConfig.Url,
-				options...,
-			)
-			if err == nil {
-				err = client.(*mcpclient.SSEMCPClient).Start(context.Background())
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			log.Info("Initializing server...", "name", name)
+			initRequest := mcp.InitializeRequest{}
+			initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+			initRequest.Params.ClientInfo = mcp.Implementation{
+				Name:    "mcphost",
+				Version: "0.1.0",
+			}
+			initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+			_, err = client.Initialize(ctx, initRequest)
+			if err != nil {
+				client.Close()
+				resultsCh <- result{name: name, client: nil, err: fmt.Errorf("failed to initialize MCP client for %s: %w", name, err)}
+				return
+			}
+
+			resultsCh <- result{name: name, client: client, err: nil}
+		}(name, server)
+	}
+
+	var firstErr error
+	for i := 0; i < len(config.MCPServers); i++ {
+		res := <-resultsCh
+		if res.err != nil {
+			// Close all successfully created clients so far
+			for _, c := range clients {
+				c.Close()
+			}
+			if firstErr == nil {
+				firstErr = res.err
 			}
 		} else {
-			stdioConfig := server.Config.(STDIOServerConfig)
-			var env []string
-			for k, v := range stdioConfig.Env {
-				env = append(env, fmt.Sprintf("%s=%s", k, v))
-			}
-			baseClient, err := mcpclient.NewStdioMCPClient(
-				stdioConfig.Command,
-				env,
-				stdioConfig.Args...)
-			if err == nil {
-				// Wrap the client to include config
-				client = &configurableMCPClient{
-					MCPClient: baseClient,
-					config:    stdioConfig,
-				}
-			}
+			clients[res.name] = res.client
 		}
-		if err != nil {
-			for _, c := range clients {
-				c.Close()
-			}
-			return nil, fmt.Errorf(
-				"failed to create MCP client for %s: %w",
-				name,
-				err,
-			)
-		}
+	}
+	close(resultsCh)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		log.Info("Initializing server...", "name", name)
-		initRequest := mcp.InitializeRequest{}
-		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-		initRequest.Params.ClientInfo = mcp.Implementation{
-			Name:    "mcphost",
-			Version: "0.1.0",
-		}
-		initRequest.Params.Capabilities = mcp.ClientCapabilities{}
-
-		_, err = client.Initialize(ctx, initRequest)
-		if err != nil {
-			client.Close()
-			for _, c := range clients {
-				c.Close()
-			}
-			return nil, fmt.Errorf(
-				"failed to initialize MCP client for %s: %w",
-				name,
-				err,
-			)
-		}
-
-		clients[name] = client
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	return clients, nil
