@@ -16,6 +16,7 @@ import (
 	"path/filepath" // Added for path manipulation
 	"strings"
 	"time"
+	"regexp"
 
 	"bytes"
 	"text/template"
@@ -619,6 +620,7 @@ type PeerAgentInstance struct {
 	agent    system.Agent
 	provider history.Provider
 	messages *[]history.HistoryMessage
+	key      string // Optional key for this agent instance
 }
 
 type PromptContext struct {
@@ -664,6 +666,73 @@ func assignAndRecordPtr(ctx *PromptContext, msg *history.HistoryMessage, label s
 
 func assignAndRecordVal(ctx *PromptContext, msg history.HistoryMessage, label string) {
 	assignAndRecord(ctx, &msg, label)
+}
+
+type AgentReference struct {
+	AgentName string
+	Key       string
+	Text      string
+}
+type AgentReferenceParseResult struct {
+	CommonText string
+	Refs       []AgentReference
+}
+
+// ParseAgentReferences parses a string for @agent[key] references and returns the common text and a slice of AgentReference.
+func ParseAgentReferences(text string, downstreamAgents []string) AgentReferenceParseResult {
+	var refs []AgentReference
+	commonText := text
+	// Build a regex to match @agent[key] or @agent
+	// Example: @doctor[professor] or @doctor
+	// We'll use a simple approach for now, can be improved for edge cases.
+	// Only match agents in downstreamAgents
+	agentPattern := strings.Join(downstreamAgents, "|")
+	// Example pattern: `@(?:doctor|mother)(?:\[[^\]]*\])?`
+	// We'll use FindAllStringIndex to get all matches and then extract.
+	pattern := `@(` + agentPattern + `)(?:\[([^\]]*)\])?`
+	re := regexp.MustCompile(pattern)
+
+	matches := re.FindAllStringSubmatchIndex(text, -1)
+	lastEnd := 0
+	var prevAgentRef *AgentReference
+	var commonParts []string
+
+	for _, match := range matches {
+		start := match[0]
+		end := match[1]
+		agentName := text[match[2]:match[3]]
+		var key string
+		if match[4] != -1 && match[5] != -1 {
+			key = text[match[4]:match[5]]
+		}
+		// Text between lastEnd and start is common text or previous agent's text
+		if prevAgentRef == nil {
+			// First match, so text before is common
+			commonParts = append(commonParts, strings.TrimSpace(text[lastEnd:start]))
+		} else {
+			prevAgentRef.Text = strings.TrimSpace(text[lastEnd:start])
+			refs = append(refs, *prevAgentRef)
+		}
+		prevAgentRef = &AgentReference{
+			AgentName: agentName,
+			Key:       key,
+			Text:      "",
+		}
+		lastEnd = end
+	}
+	// Handle trailing text
+	if prevAgentRef != nil {
+		prevAgentRef.Text = strings.TrimSpace(text[lastEnd:])
+		refs = append(refs, *prevAgentRef)
+	} else {
+		// No agent refs, all is common text
+		commonParts = append(commonParts, strings.TrimSpace(text))
+	}
+	commonText = strings.TrimSpace(strings.Join(commonParts, " "))
+	return AgentReferenceParseResult{
+		CommonText: commonText,
+		Refs:       refs,
+	}
 }
 
 func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, prompt *history.HistoryMessage) error {
@@ -806,33 +875,30 @@ func runSinglePromptIteration(ctx *PromptContext, provider history.Provider, pro
 		return runSinglePromptIteration(ctx, provider, nil) // Pass empty prompt
 	}
 
-	for _, peerAgent := range ctx.agent.GetDownstreamAgents() {
-		for _, conte := range assistantMessage.Content {
-			ix := strings.Index(conte.Text, "@"+peerAgent)
-			if ix >= 0 {
-				remains := strings.TrimSpace(conte.Text[ix+len("@"+peerAgent):])
-				for len(remains) > 0 {
-					if remains[0] == ',' {
-						remains = remains[1:]
-					}
-					remains = strings.TrimSpace(remains)
+	// --- Refactored agent reference parsing ---
+	// For each text block in assistantMessage, parse agent references
+	downstreamAgents := ctx.agent.GetDownstreamAgents()
+	for _, conte := range assistantMessage.Content {
+		if conte.Type != "text" || len(downstreamAgents) == 0 {
+			continue
+		}
+		parsed := ParseAgentReferences(conte.Text, downstreamAgents)
+		for _, ref := range parsed.Refs {
+			peerKey := ref.AgentName
+			if ref.Key != "" {
+				peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
+			}
+			if _, ok := ctx.peers[peerKey]; !ok {
+				agi, err := LoadAgentByName(ref.AgentName)
+				if err != nil {
+					log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
+					continue
 				}
-				if len(remains) > 0 {
-					ag, ok := ctx.peers[peerAgent]
-					if !ok {
-						agi, err := LoadAgentByName(peerAgent)
-						if err != nil {
-							log.Error("Failed to load agent", "agent", peerAgent, "error", err)
-							continue
-						}
-						ag = &PeerAgentInstance{
-							agent:    agi,
-							provider: nil,
-							messages: nil,
-						}
-						ctx.peers[peerAgent] = ag
-
-					}
+				ctx.peers[peerKey] = &PeerAgentInstance{
+					agent:    agi,
+					provider: nil,
+					messages: nil,
+					key:      ref.Key,
 				}
 			}
 		}
