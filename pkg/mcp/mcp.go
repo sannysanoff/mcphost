@@ -39,29 +39,29 @@ var (
 	tokyoBg     = lipgloss.Color("234") // #1a1b26
 
 	promptStyle = lipgloss.NewStyle().
-		Foreground(tokyoBlue).
-		PaddingLeft(2)
+			Foreground(tokyoBlue).
+			PaddingLeft(2)
 
 	responseStyle = lipgloss.NewStyle().
-		Foreground(tokyoFg).
-		PaddingLeft(2)
+			Foreground(tokyoFg).
+			PaddingLeft(2)
 
 	errorStyle = lipgloss.NewStyle().
-		Foreground(tokyoRed).
-		Bold(true)
+			Foreground(tokyoRed).
+			Bold(true)
 
 	toolNameStyle = lipgloss.NewStyle().
-		Foreground(tokyoCyan).
-		Bold(true)
+			Foreground(tokyoCyan).
+			Bold(true)
 
 	descriptionStyle = lipgloss.NewStyle().
-		Foreground(tokyoFg).
-		PaddingBottom(1)
+				Foreground(tokyoFg).
+				PaddingBottom(1)
 
 	contentStyle = lipgloss.NewStyle().
-		Background(tokyoBg).
-		PaddingLeft(4).
-		PaddingRight(4)
+			Background(tokyoBg).
+			PaddingLeft(4).
+			PaddingRight(4)
 )
 
 type MCPConfig struct {
@@ -368,8 +368,8 @@ func handleHelpCommand(modelsCfg *ModelsConfig, currentAgentName string) {
 	markdown.WriteString("- **/quit**: Exit the application\n")
 	markdown.WriteString("\nYou can also press Ctrl+C at any time to quit.\n")
 
-	markdown.WriteString(fmt.Sprintf("\n## Agent and Model Selection (Current Agent: `%s`)\n\n", currentAgentName))
-	markdown.WriteString(fmt.Sprintf("Model selection is driven by agents. Specify an agent using the `--agent` or `-a` flag. Agents are defined in the `agents` directory (e.g., `agents/default.go`).\n"))
+	markdown.WriteString(fmt.Sprintf("\n## Agent and model Selection (Current Agent: `%s`)\n\n", currentAgentName))
+	markdown.WriteString(fmt.Sprintf("model selection is driven by agents. Specify an agent using the `--agent` or `-a` flag. Agents are defined in the `agents` directory (e.g., `agents/default.go`).\n"))
 	markdown.WriteString(fmt.Sprintf("The selected agent determines a task (e.g., 'research', 'coding'), and MCPHost picks the best model for that task from `%s` based on `preferences_per_task` scores.\n\n", modelsConfigFile))
 
 	if modelsCfg != nil && len(modelsCfg.Providers) > 0 {
