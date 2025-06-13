@@ -617,10 +617,8 @@ func callToolWithCache(
 }
 
 type PeerAgentInstance struct {
-	agent    system.Agent
-	provider history.Provider
-	messages *[]history.HistoryMessage
-	key      string // Optional key for this agent instance
+	key    string
+	pctx   *PromptContext
 }
 
 type PromptContext struct {
@@ -895,24 +893,26 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
 						continue
 					}
+					// Create a fresh PromptContext for the peer agent instance
+					peerMessages := make([]history.HistoryMessage, 0)
+					peerTweaker := NewDefaultPromptRuntimeTweaks("", ref.AgentName)
+					peerPctx := NewPromptContext(
+						ctx.ctx,
+						McpClients,
+						AllTools,
+						agi,
+						&peerMessages,
+						peerTweaker,
+						ctx.isInteractive,
+						// peers map is initialized empty by NewPromptContext
+					)
 					ctx.peers[peerKey] = &PeerAgentInstance{
-						agent:    agi,
-						provider: nil,
-						messages: nil,
-						key:      ref.Key,
+						key:  ref.Key,
+						pctx: peerPctx,
 					}
 				}
 			}
-
-			for _, ref := range parsed.Refs {
-				peerKey := ref.AgentName
-				if ainst, ok := ctx.peers[peerKey]; ok {
-					ainst.agent.
-				}
-			}
-
-
-
+			// (Further logic for using the peer agent instance can be added here)
 		}
 	}
 
