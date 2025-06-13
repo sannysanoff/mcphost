@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath" // Added for path manipulation
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -677,8 +678,8 @@ type AgentReferenceParseResult struct {
 	Refs       []AgentReference
 }
 
-// ParseAgentReferences parses a string for @agent[key] references and returns the common text and a slice of AgentReference.
-func ParseAgentReferences(text string, downstreamAgents []string) AgentReferenceParseResult {
+// ParsePeersReferences parses a string for @agent[key] references and returns the common text and a slice of AgentReference.
+func ParsePeersReferences(text string, downstreamAgents []string) AgentReferenceParseResult {
 	var refs []AgentReference
 	commonText := text
 	// Build a regex to match @agent[key] or @agent
@@ -881,7 +882,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		if conte.Type != "text" || len(downstreamAgents) == 0 {
 			continue
 		}
-		parsed := ParseAgentReferences(conte.Text, downstreamAgents)
+		parsed := ParsePeersReferences(conte.Text, downstreamAgents)
 		if parsed.Refs != nil {
 			for _, ref := range parsed.Refs {
 				peerKey := ref.AgentName
@@ -896,7 +897,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 					}
 					// Use createPromptContext to get provider and PromptContext for the peer agent instance
 					peerMessages := make([]history.HistoryMessage, 0)
-					peerTweaker := NewDefaultPromptRuntimeTweaks("", ref.AgentName)
+					peerTweaker := NewDefaultPromptRuntimeTweaks("-peer-"+ref.AgentName, ref.AgentName)
 					// Use the same model selection logic as in runMCPHost
 					taskForModelSelection := agi.GetTaskForModelSelection()
 					selectedModelID, err := selectModelForTask(taskForModelSelection, loadedModelsConfig)
@@ -905,7 +906,10 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						continue
 					}
 					systemPrompt := createFullPrompt(agi)
-					provider, err, peerPctx, done := createPromptContext(
+
+					effectiveToolsForPeer := filterToolsWithAgent(agi, AllTools)
+
+					nprovider, err, peerPctx, done := createPromptContext(
 						ctx.ctx,
 						"", // jobID not needed for peer
 						selectedModelID,
@@ -914,7 +918,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						peerMessages,
 						peerTweaker,
 						McpClients,
-						AllTools,
+						effectiveToolsForPeer,
 						loadedModelsConfig,
 					)
 					if done || err != nil {
@@ -922,11 +926,13 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						continue
 					}
 					ctx.peers[peerKey] = &PeerAgentInstance{
-						key:  ref.Key,
-						pctx: peerPctx,
+						key:      ref.Key,
+						pctx:     peerPctx,
+						provider: nprovider,
 					}
 				}
 			}
+			peerResponse := ""
 			// (Further logic for using the peer agent instance can be added here)
 			for _, ref := range parsed.Refs {
 				peerKey := ref.AgentName
@@ -934,9 +940,21 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 					peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
 				}
 				if peer, ok := ctx.peers[peerKey]; ok {
-					runPromptIteration(peer.pctx, nil, nil)
+					errpeer := runPromptIteration(peer.pctx, peer.provider, history.NewUserMessage(ref.Text))
+					if errpeer != nil {
+						log.Error("calling peer: %v", errpeer)
+						return errpeer
+					}
+					peerResponse0 := (*peer.pctx.messages)[len(*peer.pctx.messages)-1]
+					peerResponse += "from @" + ref.AgentName
+					if ref.Key != "" {
+						peerResponse += "[" + ref.Key + "]"
+					}
+					peerResponse += ": \n"
+					peerResponse += peerResponse0.GetContent()
 				}
 			}
+			*ctx.messages = append(*ctx.messages, *history.NewUserMessage(peerResponse))
 		}
 	}
 
@@ -1108,6 +1126,11 @@ func filterToolsWithAgent(agent system.Agent, tools []history.Tool) []history.To
 	for _, tool := range tools {
 		if _, ok := enabledSet[tool.Name]; ok {
 			filteredTools = append(filteredTools, tool)
+		} else {
+			tool0 := strings.Split(tool.Name, "__")[0]
+			if _, ok = enabledSet[tool0]; ok && !slices.Contains(filteredTools, tool) {
+				filteredTools = append(filteredTools, tool)
+			}
 		}
 	}
 	return filteredTools
