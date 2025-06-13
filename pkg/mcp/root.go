@@ -1794,11 +1794,6 @@ func createFullPrompt(agent system.Agent) string {
 	return baseSystemPrompt
 }
 
-import (
-	"bytes"
-	"text/template"
-)
-
 func generateDownstreamAgentPrompt(agents []string) string {
 	type AgentIntro struct {
 		Name  string
