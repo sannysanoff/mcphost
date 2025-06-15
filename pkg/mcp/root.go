@@ -986,7 +986,7 @@ func maybeHandleToolCalls(ctx *PromptContext, message history.Message, assistant
 			// Potentially skip this tool call or add an error message
 			continue
 		}
-		log.Info("🔧 Using tool", "name", toolCall.GetName(), "args", string(inputBytes))
+		log.Info("🔧 Using tool", "name", toolCall.GetName(), "args", toolCall.GetArguments())
 		assistantMessage.Content = append(assistantMessage.Content, history.ContentBlock{
 			Type:  "tool_use",
 			ID:    toolCall.GetID(),
@@ -1090,6 +1090,9 @@ func maybeHandleToolCalls(ctx *PromptContext, message history.Message, assistant
 					log.Warn("Unsupported tool result content block type", "type", fmt.Sprintf("%T", item))
 				}
 			}
+
+			// Log tool response
+			log.Info("🔧 Tool response", "name", toolCall.GetName(), "response", strings.TrimSpace(resultTextForDisplay))
 
 			// Create the tool result block for the assistant's message
 			toolResponseBlockForHistory := history.ContentBlock{
