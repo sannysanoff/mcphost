@@ -547,8 +547,8 @@ func performActualToolCall(
 func callToolWithCache(
 	ctx context.Context,
 	mcpClient mcpclient.MCPClient,
-	fullToolName string,          // serverName__toolName
-	toolArgsJSON []byte,          // Marshalled arguments from toolCall.GetArguments()
+	fullToolName string, // serverName__toolName
+	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
 	precedingMessagesHash string, // Hash of the LLM input context
 	rateLimit time.Duration,
 	isInteractive bool,
@@ -750,7 +750,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		}
 
 		log.Info("Processing prompt iteration",
-			"agent", ctx.agent.Filename(),
+			"agent", ctx.agent.Name(),
 			"tool_count", len(effectiveToolsForLogging),
 			"peer_count", peerCount,
 			"history_length", len(*ctx.messages))
@@ -1277,7 +1277,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	if err != nil {
 		return fmt.Errorf("error loading agent '%s': %w", agentNameFlag, err)
 	}
-	log.Info("Loaded agent for CLI mode", "agent", agent.Filename())
+	log.Info("Loaded agent for CLI mode", "agent", agent.Name())
 
 	systemPrompt := createFullPrompt(agent)
 	taskForModelSelection := agent.GetTaskForModelSelection()
@@ -1625,7 +1625,7 @@ func handleStartJob(
 		http.Error(w, fmt.Sprintf("Failed to load agent '%s': %s", agentNameToUse, err.Error()), http.StatusInternalServerError)
 		return
 	}
-	log.Info("Loaded agent for job", "agent_name", agentNameToUse, "agent_filename", agent.Filename())
+	log.Info("Loaded agent for job", "agent_name", agentNameToUse, "agent_filename", agent.Name())
 
 	// Determine system prompt: use request's if provided, else agent's default
 	systemPromptToUse := req.SystemMessage
