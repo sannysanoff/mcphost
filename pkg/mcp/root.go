@@ -696,7 +696,6 @@ func ParsePeersReferences(text string, downstreamAgents []string) AgentReference
 
 	for _, match := range matches {
 		start := match[0]
-		end := match[1]
 		agentName := text[match[2]:match[3]]
 		var key string
 		if match[4] != -1 && match[5] != -1 {
