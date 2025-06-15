@@ -677,18 +677,16 @@ type AgentReferenceParseResult struct {
 	Refs       []AgentReference
 }
 
-// ParsePeersReferences parses a string for @agent[key] references and returns the common text and a slice of AgentReference.
+// ParsePeersReferences parses a string for @agent[key] references followed by "please" and returns the common text and a slice of AgentReference.
 func ParsePeersReferences(text string, downstreamAgents []string) AgentReferenceParseResult {
 	var refs []AgentReference
 	commonText := text
-	// Build a regex to match @agent[key] or @agent
-	// Example: @doctor[professor] or @doctor
-	// We'll use a simple approach for now, can be improved for edge cases.
-	// Only match agents in downstreamAgents
+	// Build a regex to match @agent[key], please or @agent, please or @agent please
+	// Example: @doctor[professor], please or @doctor, please or @doctor please
+	// Only match agents in downstreamAgents, case-insensitive
 	agentPattern := strings.Join(downstreamAgents, "|")
-	// Example pattern: `@(?:doctor|mother)(?:\[[^\]]*\])?`
-	// We'll use FindAllStringIndex to get all matches and then extract.
-	pattern := `@(` + agentPattern + `)(?:\[([^\]]*)\])?`
+	// Pattern matches: @(agent)([key])?,? please (case-insensitive)
+	pattern := `(?i)@(` + agentPattern + `)(?:\[([^\]]*)\])?,?\s+please`
 	re := regexp.MustCompile(pattern)
 
 	matches := re.FindAllStringSubmatchIndex(text, -1)
