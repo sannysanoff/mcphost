@@ -873,14 +873,128 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		})
 	}
 
-	toolCallResponses := maybeHandleToolCalls(ctx, message, &assistantMessage, llmCallHistoryHashForToolCache)
-
-	// Add the assistant's message (text and tool_use calls) to history
-	if len(assistantMessage.Content) > 0 {
-		assignAndRecordPtr(ctx, &assistantMessage, "assistant_response_and_tool_calls")
+	// --- Process peer calling first ---
+	// For each text block in assistantMessage, parse agent references
+	downstreamAgents := ctx.agent.GetDownstreamAgents()
+	hasPeerCalls := false
+	for _, conte := range assistantMessage.Content {
+		if conte.Type != "text" || len(downstreamAgents) == 0 {
+			continue
+		}
+		parsed := ParsePeersReferences(conte.Text, downstreamAgents)
+		if parsed.Refs != nil && len(parsed.Refs) > 0 {
+			hasPeerCalls = true
+			break
+		}
 	}
 
-	// Add all tool responses to history and record state after each
+	// If we have peer calls, ignore any tool calls and only process peers
+	var toolCallResponses []history.HistoryMessage
+	if hasPeerCalls {
+		// Remove any tool_use content blocks from assistantMessage since we're ignoring tool calls
+		var filteredContent []history.ContentBlock
+		for _, block := range assistantMessage.Content {
+			if block.Type != "tool_use" {
+				filteredContent = append(filteredContent, block)
+			}
+		}
+		assistantMessage.Content = filteredContent
+
+		// Process peer calls
+		for _, conte := range assistantMessage.Content {
+			if conte.Type != "text" || len(downstreamAgents) == 0 {
+				continue
+			}
+			parsed := ParsePeersReferences(conte.Text, downstreamAgents)
+			if parsed.Refs != nil {
+				for _, ref := range parsed.Refs {
+					peerKey := ref.AgentName
+					if ref.Key != "" {
+						peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
+					}
+					if _, ok := ctx.peers[peerKey]; !ok {
+						agi, err := LoadAgentByName(ref.AgentName)
+						if err != nil {
+							log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
+							continue
+						}
+						// Use createPromptContext to get provider and PromptContext for the peer agent instance
+						peerMessages := make([]history.HistoryMessage, 0)
+						peerTweaker := NewDefaultPromptRuntimeTweaks("-peer-"+ref.AgentName, ref.AgentName)
+						// Use the same model selection logic as in runMCPHost
+						taskForModelSelection := agi.GetTaskForModelSelection()
+						selectedModelID, err := selectModelForTask(taskForModelSelection, loadedModelsConfig)
+						if err != nil {
+							log.Error("Failed to select model for peer agent", "agent", ref.AgentName, "error", err)
+							continue
+						}
+						systemPrompt := createFullPrompt(agi)
+
+						effectiveToolsForPeer := filterToolsWithAgent(agi, AllTools)
+
+						nprovider, err, peerPctx, done := createPromptContext(
+							ctx.ctx,
+							"", // jobID not needed for peer
+							selectedModelID,
+							agi,
+							systemPrompt,
+							peerMessages,
+							peerTweaker,
+							McpClients,
+							effectiveToolsForPeer,
+							loadedModelsConfig,
+						)
+						if done || err != nil {
+							log.Error("Failed to create prompt context for peer agent", "agent", ref.AgentName, "error", err)
+							continue
+						}
+						ctx.peers[peerKey] = &PeerAgentInstance{
+							key:      ref.Key,
+							pctx:     peerPctx,
+							provider: nprovider,
+						}
+					}
+				}
+				peerResponse := ""
+				// (Further logic for using the peer agent instance can be added here)
+				for _, ref := range parsed.Refs {
+					peerKey := ref.AgentName
+					if ref.Key != "" {
+						peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
+					}
+					if peer, ok := ctx.peers[peerKey]; ok {
+						errpeer := runPromptIteration(peer.pctx, peer.provider, history.NewUserMessage(ref.Text))
+						if errpeer != nil {
+							log.Error("calling peer: %v", errpeer)
+							return errpeer
+						}
+						peerResponse0 := (*peer.pctx.messages)[len(*peer.pctx.messages)-1]
+						peerResponse += "from @" + ref.AgentName
+						if ref.Key != "" {
+							peerResponse += "[" + ref.Key + "]"
+						}
+						peerResponse += ": \n"
+						peerResponse += peerResponse0.GetContent()
+					}
+				}
+				*ctx.messages = append(*ctx.messages, *history.NewUserMessage(peerResponse))
+			}
+		}
+	} else {
+		// No peer calls, process tool calls normally
+		toolCallResponses = maybeHandleToolCalls(ctx, message, &assistantMessage, llmCallHistoryHashForToolCache)
+	}
+
+	// Add the assistant's message (text and possibly tool_use calls if no peers) to history
+	if len(assistantMessage.Content) > 0 {
+		if hasPeerCalls {
+			assignAndRecordPtr(ctx, &assistantMessage, "assistant_response_with_peer_calls")
+		} else {
+			assignAndRecordPtr(ctx, &assistantMessage, "assistant_response_and_tool_calls")
+		}
+	}
+
+	// Add all tool responses to history and record state after each (only if no peer calls)
 	if len(toolCallResponses) > 0 {
 		for _, toolRespMsg := range toolCallResponses {
 			assignAndRecordVal(ctx, toolRespMsg, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID()))
@@ -888,89 +1002,6 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		// Make another call to the LLM with the tool results
 		// Pass the tweaker and isInteractive flags down
 		return runPromptIteration(ctx, provider, nil) // Pass empty prompt
-	}
-
-	// --- Refactored agent reference parsing ---
-	// For each text block in assistantMessage, parse agent references
-	downstreamAgents := ctx.agent.GetDownstreamAgents()
-	for _, conte := range assistantMessage.Content {
-		if conte.Type != "text" || len(downstreamAgents) == 0 {
-			continue
-		}
-		parsed := ParsePeersReferences(conte.Text, downstreamAgents)
-		if parsed.Refs != nil {
-			for _, ref := range parsed.Refs {
-				peerKey := ref.AgentName
-				if ref.Key != "" {
-					peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
-				}
-				if _, ok := ctx.peers[peerKey]; !ok {
-					agi, err := LoadAgentByName(ref.AgentName)
-					if err != nil {
-						log.Error("Failed to load agent", "agent", ref.AgentName, "error", err)
-						continue
-					}
-					// Use createPromptContext to get provider and PromptContext for the peer agent instance
-					peerMessages := make([]history.HistoryMessage, 0)
-					peerTweaker := NewDefaultPromptRuntimeTweaks("-peer-"+ref.AgentName, ref.AgentName)
-					// Use the same model selection logic as in runMCPHost
-					taskForModelSelection := agi.GetTaskForModelSelection()
-					selectedModelID, err := selectModelForTask(taskForModelSelection, loadedModelsConfig)
-					if err != nil {
-						log.Error("Failed to select model for peer agent", "agent", ref.AgentName, "error", err)
-						continue
-					}
-					systemPrompt := createFullPrompt(agi)
-
-					effectiveToolsForPeer := filterToolsWithAgent(agi, AllTools)
-
-					nprovider, err, peerPctx, done := createPromptContext(
-						ctx.ctx,
-						"", // jobID not needed for peer
-						selectedModelID,
-						agi,
-						systemPrompt,
-						peerMessages,
-						peerTweaker,
-						McpClients,
-						effectiveToolsForPeer,
-						loadedModelsConfig,
-					)
-					if done || err != nil {
-						log.Error("Failed to create prompt context for peer agent", "agent", ref.AgentName, "error", err)
-						continue
-					}
-					ctx.peers[peerKey] = &PeerAgentInstance{
-						key:      ref.Key,
-						pctx:     peerPctx,
-						provider: nprovider,
-					}
-				}
-			}
-			peerResponse := ""
-			// (Further logic for using the peer agent instance can be added here)
-			for _, ref := range parsed.Refs {
-				peerKey := ref.AgentName
-				if ref.Key != "" {
-					peerKey = fmt.Sprintf("%s[%s]", ref.AgentName, ref.Key)
-				}
-				if peer, ok := ctx.peers[peerKey]; ok {
-					errpeer := runPromptIteration(peer.pctx, peer.provider, history.NewUserMessage(ref.Text))
-					if errpeer != nil {
-						log.Error("calling peer: %v", errpeer)
-						return errpeer
-					}
-					peerResponse0 := (*peer.pctx.messages)[len(*peer.pctx.messages)-1]
-					peerResponse += "from @" + ref.AgentName
-					if ref.Key != "" {
-						peerResponse += "[" + ref.Key + "]"
-					}
-					peerResponse += ": \n"
-					peerResponse += peerResponse0.GetContent()
-				}
-			}
-			*ctx.messages = append(*ctx.messages, *history.NewUserMessage(peerResponse))
-		}
 	}
 
 	*ctx.messages = ctx.agent.NormalizeHistory(context.WithValue(ctx.ctx, "PromptRuntimeTweaks", ctx.tweaker), *ctx.messages)
