@@ -1240,7 +1240,7 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		log.Info("Shutting down MCP servers...")
 		for name, client := range McpClients {
 			if err := client.Close(); err != nil {
-				log.Error("Failed to close server", "name", name, "error", err)
+				log.Warn("Failed to close server", "name", name, "error", err)
 			} else {
 				log.Info("Server closed", "name", name)
 			}
@@ -1437,7 +1437,7 @@ func runServerMode(ctx context.Context, modelsCfg *ModelsConfig) error {
 		log.Info("Server shutting down, closing MCP clients...")
 		for name, client := range serverMcpClients {
 			if err := client.Close(); err != nil {
-				log.Error("Failed to close MCP client during server shutdown", "name", name, "error", err)
+				log.Warn("Failed to close MCP client during server shutdown", "name", name, "error", err)
 			} else {
 				log.Info("MCP client closed", "name", name)
 			}
