@@ -547,8 +547,8 @@ func performActualToolCall(
 func callToolWithCache(
 	ctx context.Context,
 	mcpClient mcpclient.MCPClient,
-	fullToolName string, // serverName__toolName
-	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
+	fullToolName string,          // serverName__toolName
+	toolArgsJSON []byte,          // Marshalled arguments from toolCall.GetArguments()
 	precedingMessagesHash string, // Hash of the LLM input context
 	rateLimit time.Duration,
 	isInteractive bool,
@@ -739,7 +739,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 	if prompt != nil && ctx.isInteractive {
 		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt.GetContent()))
 	}
-	
+
 	// Log iteration details for non-interactive mode
 	if prompt != nil && !ctx.isInteractive {
 		effectiveToolsForLogging := filterToolsWithAgent(ctx.agent, ctx.tools)
@@ -748,7 +748,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		if downstreamAgents != nil {
 			peerCount = len(downstreamAgents)
 		}
-		
+
 		log.Info("Processing prompt iteration",
 			"agent", ctx.agent.Filename(),
 			"tool_count", len(effectiveToolsForLogging),
@@ -1301,8 +1301,8 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 		if downstreamAgents != nil {
 			peerCount = len(downstreamAgents)
 		}
-		
-		log.Info("Running in non-interactive mode with provided user prompt.", 
+
+		log.Info("Running in non-interactive mode with provided user prompt.",
 			"prompt", userPromptCLI,
 			"agent", agentNameFlag,
 			"tool_count", len(effectiveToolsForLogging),
@@ -1996,7 +1996,7 @@ you can follow up with detailed requests etc.
 ==============
 
 {{- range . }}
-## @{{ .Name }}
+## Peer: @{{ .Name }}
 {{ .Intro }}
 
 
