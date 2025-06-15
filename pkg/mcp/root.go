@@ -547,8 +547,8 @@ func performActualToolCall(
 func callToolWithCache(
 	ctx context.Context,
 	mcpClient mcpclient.MCPClient,
-	fullToolName string, // serverName__toolName
-	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
+	fullToolName string,          // serverName__toolName
+	toolArgsJSON []byte,          // Marshalled arguments from toolCall.GetArguments()
 	precedingMessagesHash string, // Hash of the LLM input context
 	rateLimit time.Duration,
 	isInteractive bool,
@@ -647,7 +647,8 @@ func NewPromptContext(ctx context.Context, mcpClients map[string]mcpclient.MCPCl
 }
 
 // Method implementations for simpleMessage
-func assignAndRecord(ctx *PromptContext, msg *history.HistoryMessage, label string) {
+
+func appendMessageAndSaveHistory(ctx *PromptContext, msg *history.HistoryMessage, label string) {
 	if ctx.tweaker != nil {
 		ctx.tweaker.AssignIDsToNewMessage(msg, *ctx.messages)
 	}
@@ -657,14 +658,6 @@ func assignAndRecord(ctx *PromptContext, msg *history.HistoryMessage, label stri
 			log.Error("Failed to record trace", "label", label, "error", err)
 		}
 	}
-}
-
-func assignAndRecordPtr(ctx *PromptContext, msg *history.HistoryMessage, label string) {
-	assignAndRecord(ctx, msg, label)
-}
-
-func assignAndRecordVal(ctx *PromptContext, msg history.HistoryMessage, label string) {
-	assignAndRecord(ctx, &msg, label)
 }
 
 type AgentReference struct {
@@ -701,7 +694,7 @@ func ParsePeersReferences(text string, downstreamAgents []string) AgentReference
 		if match[4] != -1 && match[5] != -1 {
 			key = text[match[4]:match[5]]
 		}
-		
+
 		// Find the start of the agent reference (@agentname[key])
 		atStart := start
 		// Find where the actual content starts (after @agentname[key], optional comma and whitespace)
@@ -731,7 +724,7 @@ func ParsePeersReferences(text string, downstreamAgents []string) AgentReference
 				break
 			}
 		}
-		
+
 		// Text between lastEnd and atStart is common text or previous agent's text
 		if prevAgentRef == nil {
 			// First match, so text before is common
@@ -859,7 +852,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		//
 		// INITIAL ENTRY
 		//
-		assignAndRecordPtr(ctx, prompt, "user_prompt_sent")
+		appendMessageAndSaveHistory(ctx, prompt, "user_prompt_sent")
 	}
 
 	// Assistant's turn to respond, prepare its message structure
@@ -1005,27 +998,23 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 						peerResponse += peerResponse0.GetContent()
 					}
 				}
-				*ctx.messages = append(*ctx.messages, *history.NewUserMessage(peerResponse))
+				// Add the assistant's message (text and possibly tool_use calls if no peers) to history
+				appendMessageAndSaveHistory(ctx, &assistantMessage, "assistant_peer_call")
+
+				appendMessageAndSaveHistory(ctx, history.NewUserMessage(peerResponse), "peer_response")
+
 			}
 		}
 	} else {
-		// No peer calls, process tool calls normally
+		// modifies assistant message from message
 		toolCallResponses = maybeHandleToolCalls(ctx, message, &assistantMessage, llmCallHistoryHashForToolCache)
-	}
-
-	// Add the assistant's message (text and possibly tool_use calls if no peers) to history
-	if len(assistantMessage.Content) > 0 {
-		if hasPeerCalls {
-			assignAndRecordPtr(ctx, &assistantMessage, "assistant_response_with_peer_calls")
-		} else {
-			assignAndRecordPtr(ctx, &assistantMessage, "assistant_response_and_tool_calls")
-		}
+		appendMessageAndSaveHistory(ctx, &assistantMessage, "assistant_tool_call")
 	}
 
 	// Add all tool responses to history and record state after each (only if no peer calls)
 	if len(toolCallResponses) > 0 {
 		for _, toolRespMsg := range toolCallResponses {
-			assignAndRecordVal(ctx, toolRespMsg, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID()))
+			appendMessageAndSaveHistory(ctx, &toolRespMsg, fmt.Sprintf("tool_response_%s", toolRespMsg.GetToolResponseID()))
 		}
 		// Make another call to the LLM with the tool results
 		// Pass the tweaker and isInteractive flags down

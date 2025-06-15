@@ -67,7 +67,7 @@ func (d *DefaultPromptRuntimeTweaks) AssignIDsToNewMessage(newMessage *history.H
 			newMessage.Metadata = &history.MessageMetadata{}
 		}
 		// Dereference the pointer to access the map and set the agent_name
-		(*newMessage.Metadata)["agent_name"] = d.agentName
+		newMessage.Metadata.AgentName = d.agentName
 	}
 }
 

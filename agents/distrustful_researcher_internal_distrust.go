@@ -12,9 +12,10 @@ type DistrustfulResearcherInternalDistrustAgent struct {
 }
 
 // DistrustfulResearcherInternalDistrustNew creates a new DistrustfulResearcherInternalDistrustAgent.
+//
 //goland:noinspection GoUnusedExportedFunction
-func DistrustfulResearcherInternalDistrustNew() *DistrustfulResearcherInternalDistrustAgent {
-	return &DistrustfulResearcherInternalDistrustAgent{system.AgentImplementationBase{}}
+func DistrustfulResearcherInternalDistrustNew() system.Agent {
+	return &DistrustfulResearcherInternalDistrustAgent{system.AgentImplementationBase{FileName: "internal_distrust"}}
 }
 
 // GetSystemPrompt returns the system prompt for the DistrustfulResearcherInternalDistrustAgent.
@@ -43,12 +44,6 @@ Today is: %s ."
 `, fmt.Sprintf("%v", time.Now()))
 }
 
-// DistrustfulResearcherInternalDistrustImplementation returns the system.AgentImplementation for this agent.
-func DistrustfulResearcherInternalDistrustImplementation() system.AgentImplementation {
-	agent := DistrustfulResearcherInternalDistrustNew()
-	return system.AgentImplementation{
-		AgentData:               nil,
-		GetPrompt:               agent.GetSystemPrompt,
-		DefaultNormalizeHistory: agent.NormalizeHistory, // Inherited from AgentImplementationBase
-	}
+func init() {
+	system.RegisterAgent("distrustful_researcher_internal_distrust", DistrustfulResearcherInternalDistrustNew)
 }

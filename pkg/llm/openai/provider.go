@@ -38,6 +38,16 @@ func NewProvider(apiKey, baseURL, model, systemPrompt string) *Provider {
 	}
 }
 
+// GetModel returns the name of the model used by the provider.
+func (p *Provider) GetModel() string {
+	return p.model
+}
+
+// GetSystemPrompt returns the system prompt used by the provider.
+func (p *Provider) GetSystemPrompt() string {
+	return p.systemPrompt
+}
+
 func (p *Provider) CreateMessage(
 	ctx context.Context,
 	prompt string,

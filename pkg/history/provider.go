@@ -64,4 +64,6 @@ type Provider interface {
 
 	// Name returns the provider's name
 	Name() string
+	GetModel() string
+	GetSystemPrompt() string
 }

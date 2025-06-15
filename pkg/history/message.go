@@ -2,18 +2,29 @@ package history
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	_ "gopkg.in/yaml.v3" // Used for YAML struct tags, actual (un)marshalling happens elsewhere
 )
 
+type MessageMetadata struct {
+	AgentName string `json:"agent_name,omitempty" yaml:"agent_name,omitempty"`
+}
+
 // HistoryMessage implements the llm.Message interface for stored messages
 type HistoryMessage struct {
-	ID         int            `json:"id" yaml:"id"`
-	PreviousID int            `json:"previous_id" yaml:"previous_id"`
-	Role       string         `json:"role" yaml:"role"`
-	Content    []ContentBlock `json:"content" yaml:"content"`
-	Synthetic  string         `json:"synthetic,omitempty" yaml:"synthetic,omitempty"` // Information about agent/phase acting as user
+	ID            int              `json:"id" yaml:"id"`
+	PreviousID    int              `json:"previous_id" yaml:"previous_id"`
+	Role          string           `json:"role" yaml:"role"`
+	Content       []ContentBlock   `json:"content" yaml:"content"`
+	Synthetic     string           `json:"synthetic,omitempty" yaml:"synthetic,omitempty"`
+	RecursiveJobs []string         `json:"recursive_jobs,omitempty" yaml:"recursive_jobs,omitempty"`
+	Metadata      *MessageMetadata `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+}
+
+func (p HistoryMessage) GoString() string {
+	return fmt.Sprintf("Content: %s", p.GetContent())
 }
 
 // Ensure HistoryMessage implements yaml.Marshaler and yaml.Unmarshaler if custom logic is needed.

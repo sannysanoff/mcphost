@@ -116,6 +116,16 @@ type MockProvider struct {
 	OtherResponses func(string) string
 }
 
+func (m *MockProvider) GetModel() string {
+	//TODO implement me
+	return "mock_model"
+}
+
+func (m *MockProvider) GetSystemPrompt() string {
+	//TODO implement me
+	return "mock system prompt"
+}
+
 func (m *MockProvider) CreateMessage(ctx context.Context, prompt string, messages []history.Message, tools []history.Tool) (history.Message, error) {
 	if prompt == "" {
 		lastMessage := messages[len(messages)-1]
@@ -222,6 +232,6 @@ func MakeMockWebFetch() mcp.Tool {
 	}
 }
 
-func MockPerformLLMCall(agent string, prompt string) (string, error) {
-	return "response_from:" + prompt, nil
+func MockPerformLLMCall(agent string, prompt string) (string, string, error) {
+	return "response_from:" + prompt, "", nil
 }

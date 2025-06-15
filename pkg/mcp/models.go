@@ -52,7 +52,7 @@ func LoadModelsConfig(filePath string) (*ModelsConfig, error) {
 			// Check for duplicates
 			if existing, found := seenIDs[currentModelID]; found {
 				return nil, fmt.Errorf(
-					"duplicate model ID '%s' found. Original: Provider '%s', Model Name '%s'. Conflicting: Provider '%s', Model Name '%s'",
+					"duplicate model ID '%s' found. Original: Provider '%s', model Name '%s'. Conflicting: Provider '%s', model Name '%s'",
 					currentModelID,
 					existing.ProviderName,
 					existing.ModelName,

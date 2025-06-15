@@ -1,6 +1,7 @@
 package system
 
 import (
+	"context"
 	"github.com/sannysanoff/mcphost/pkg/history"
 )
 
@@ -10,13 +11,18 @@ type Agent interface {
 	GetSystemPrompt() string
 
 	// NormalizeHistory processes and normalizes message history
-	NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage
+	NormalizeHistory(ctx context.Context, messages []history.HistoryMessage) []history.HistoryMessage
 
 	// Filename returns the source file name of this agent
-	Filename() string
+	Name() string
 
 	GetTaskForModelSelection() string
 
+	GetDownstreamAgents() []string
+
+	GetEnabledTools() []string
+
+	GetIntroductionAsDownstreamAgent() string
 }
 
 func NativeFunction(a string) string {
@@ -28,10 +34,9 @@ type AgentImplementation struct {
 }
 
 type AgentImplementationBase struct {
-	filename string
+	FileName string
 
 	coAgents map[string][]history.HistoryMessage
-
 }
 
 // GetSystemPrompt returns a default system prompt.
@@ -40,23 +45,35 @@ func (e *AgentImplementationBase) GetSystemPrompt() string {
 	return "You are helpful assistant"
 }
 
+func (e *AgentImplementationBase) GetDownstreamAgents() []string {
+	return nil
+}
+
+func (e *AgentImplementationBase) GetIntroductionAsDownstreamAgent() string {
+	return ""
+}
+
+func (e *AgentImplementationBase) GetEnabledTools() []string {
+	return nil
+}
+
 // NormalizeHistory provides a default behavior for normalizing messages.
 // Specific agents can override this.
-func (e *AgentImplementationBase) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+func (e *AgentImplementationBase) NormalizeHistory(ctx context.Context, messages []history.HistoryMessage) []history.HistoryMessage {
 	return messages
 }
 
-func (e *AgentImplementationBase) Filename() string {
+func (e *AgentImplementationBase) Name() string {
 	// Ensure this field is set by the agent's constructor or an init method.
 	// It should typically return the name the agent was registered with.
-	if e.filename == "" {
+	if e.FileName == "" {
 		// This is a fallback or a gentle reminder that it should be set.
 		// Depending on strictness, could log a warning or even panic.
 		// For now, let's return a placeholder.
 		// log.Warn("AgentImplementationBase.filename is not set. Filename() will return 'unknown_agent_filename'.")
 		return "unknown_agent_filename_please_set_in_constructor"
 	}
-	return e.filename
+	return e.FileName
 }
 
 func (e *AgentImplementationBase) GetTaskForModelSelection() string {

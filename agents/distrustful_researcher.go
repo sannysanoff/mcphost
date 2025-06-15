@@ -1,8 +1,11 @@
 package agents
 
 import (
+	"context"
 	"fmt"
+	"github.com/charmbracelet/log"
 	"github.com/sannysanoff/mcphost/pkg/history"
+	"github.com/sannysanoff/mcphost/pkg/mcp"
 	"github.com/sannysanoff/mcphost/pkg/system"
 	"time"
 )
@@ -13,8 +16,10 @@ type DistrustfulResearcherAgent struct {
 }
 
 // DistrustfulResearcherNew creates a new DistrustfulResearcherAgent.
-func DistrustfulResearcherNew() *DistrustfulResearcherAgent {
-	return &DistrustfulResearcherAgent{system.AgentImplementationBase{}}
+//
+//goland:noinspection GoUnusedExportedFunction
+func DistrustfulResearcherNew() system.Agent {
+	return &DistrustfulResearcherAgent{system.AgentImplementationBase{FileName: "distrustful_researcher"}}
 }
 
 // GetSystemPrompt returns the system prompt for the DistrustfulResearcherAgent.
@@ -33,7 +38,7 @@ Today is: %s ."
 }
 
 // NormalizeHistory provides custom history normalization for the DistrustfulResearcherAgent.
-func (a *DistrustfulResearcherAgent) NormalizeHistory(messages []history.HistoryMessage) []history.HistoryMessage {
+func (a *DistrustfulResearcherAgent) NormalizeHistory(ctx context.Context, messages []history.HistoryMessage) []history.HistoryMessage {
 	fmt.Println("DistrustfulResearcherNormalizeHistory running")
 	if messages == nil || len(messages) == 0 {
 		return messages
@@ -60,6 +65,10 @@ func (a *DistrustfulResearcherAgent) NormalizeHistory(messages []history.History
 	isModelAnswerLast := system.IsModelAnswer(*last)
 	isUserMessageFirst := system.IsUserMessage(first)
 	fmt.Println("isModelAnswerLast", isModelAnswerLast, "isUserMessageFirst", isUserMessageFirst)
+	tweaker, _ := ctx.Value("PromptRuntimeTweaks").(mcp.PromptRuntimeTweaks)
+	if tweaker == nil {
+		log.Fatalf("Tweaker not found in context, this should not happen.")
+	}
 	if isModelAnswerLast && isUserMessageFirst {
 		if distrust1 == nil {
 			// generate distrust
@@ -73,6 +82,7 @@ func (a *DistrustfulResearcherAgent) NormalizeHistory(messages []history.History
 			last.RecursiveJobs = append(last.RecursiveJobs, job)
 			newMsg := history.NewUserMessage(msg)
 			newMsg.Synthetic = "distrust1"
+			tweaker.AssignIDsToNewMessage(newMsg, messages)
 			messages = append(messages, *newMsg)
 			return messages
 		} else {
@@ -92,6 +102,7 @@ func (a *DistrustfulResearcherAgent) NormalizeHistory(messages []history.History
 			last.RecursiveJobs = append(last.RecursiveJobs, job)
 			newMsg := history.NewAssistantResponse("After careful research and grounding:\n" + msg)
 			newMsg.Synthetic = "distrust_merged"
+			tweaker.AssignIDsToNewMessage(newMsg, messages)
 			messages = append(messages, *newMsg)
 			return messages
 		}
@@ -99,12 +110,6 @@ func (a *DistrustfulResearcherAgent) NormalizeHistory(messages []history.History
 	return messages
 }
 
-// DistrustfulResearcherImplementation returns the system.AgentImplementation for the DistrustfulResearcherAgent.
-func DistrustfulResearcherImplementation() system.AgentImplementation {
-	agent := DistrustfulResearcherNew()
-	return system.AgentImplementation{
-		AgentData:               nil,
-		GetPrompt:               agent.GetSystemPrompt,
-		DefaultNormalizeHistory: agent.NormalizeHistory,
-	}
+func init() {
+	system.RegisterAgent("distrustful_researcher", DistrustfulResearcherNew)
 }

@@ -12,9 +12,10 @@ type DistrustfulResearcherInternalGroundMergeAgent struct {
 }
 
 // DistrustfulResearcherInternalGroundMergeNew creates a new DistrustfulResearcherInternalGroundMergeAgent.
+//
 //goland:noinspection GoUnusedExportedFunction
-func DistrustfulResearcherInternalGroundMergeNew() *DistrustfulResearcherInternalGroundMergeAgent {
-	return &DistrustfulResearcherInternalGroundMergeAgent{system.AgentImplementationBase{}}
+func DistrustfulResearcherInternalGroundMergeNew() system.Agent {
+	return &DistrustfulResearcherInternalGroundMergeAgent{system.AgentImplementationBase{FileName: "internal_ground_merge"}}
 }
 
 // GetSystemPrompt returns the system prompt for the DistrustfulResearcherInternalGroundMergeAgent.
@@ -50,12 +51,6 @@ Today is: %s ."
 `, fmt.Sprintf("%v", time.Now()))
 }
 
-// DistrustfulResearcherInternalGroundMergeImplementation returns the system.AgentImplementation for this agent.
-func DistrustfulResearcherInternalGroundMergeImplementation() system.AgentImplementation {
-	agent := DistrustfulResearcherInternalGroundMergeNew()
-	return system.AgentImplementation{
-		AgentData:               nil,
-		GetPrompt:               agent.GetSystemPrompt,
-		DefaultNormalizeHistory: agent.NormalizeHistory, // Inherited from AgentImplementationBase
-	}
+func init() {
+	system.RegisterAgent("distrustful_researcher_internal_ground_merge", DistrustfulResearcherInternalGroundMergeNew)
 }

@@ -17,6 +17,16 @@ type Provider struct {
 	toolCallID   int // This might need to be a string if IDs are not sequential integers
 }
 
+// GetModel returns the name of the model used by the provider.
+func (p *Provider) GetModel() string {
+	return p.model
+}
+
+// GetSystemPrompt returns the system prompt used by the provider.
+func (p *Provider) GetSystemPrompt() string {
+	return p.systemPrompt
+}
+
 func NewProvider(ctx context.Context, apiKey, model, systemPrompt string) (*Provider, error) {
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:      apiKey,
@@ -74,7 +84,7 @@ func (p *Provider) CreateMessage(ctx context.Context, prompt string, messages []
 		SpeechConfig:       nil,
 		AudioTimestamp:     false,
 		ThinkingConfig: &genai.ThinkingConfig{
-			IncludeThoughts: true,
+			IncludeThoughts: false,
 			ThinkingBudget:  &thinkingBudget,
 		},
 	}

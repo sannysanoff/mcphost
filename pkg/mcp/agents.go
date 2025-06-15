@@ -60,6 +60,6 @@ func LoadAgentByName(agentName string) (system.Agent, error) {
 	}
 
 	agentInstance := constructor()
-	log.Info("Loaded agent from compiled-in map", "name", agentName, "filename_method_output", agentInstance.Filename())
+	log.Info("Loaded agent from compiled-in map", "name", agentName, "filename_method_output", agentInstance.Name())
 	return agentInstance, nil
 }

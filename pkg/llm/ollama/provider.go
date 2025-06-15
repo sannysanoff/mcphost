@@ -24,6 +24,16 @@ type Provider struct {
 	systemPrompt string
 }
 
+// GetModel returns the name of the model used by the provider.
+func (p *Provider) GetModel() string {
+	return p.model
+}
+
+// GetSystemPrompt returns the system prompt used by the provider.
+func (p *Provider) GetSystemPrompt() string {
+	return p.systemPrompt
+}
+
 // NewProvider creates a new Ollama provider
 func NewProvider(model string, systemPrompt string) (*Provider, error) {
 	client, err := api.ClientFromEnvironment()

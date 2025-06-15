@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "github.com/sannysanoff/mcphost/agents"
 	"github.com/sannysanoff/mcphost/pkg/mcp"
 )
 
