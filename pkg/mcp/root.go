@@ -685,8 +685,8 @@ func ParsePeersReferences(text string, downstreamAgents []string) AgentReference
 	// Example: @doctor[professor], please or @doctor, please or @doctor please
 	// Only match agents in downstreamAgents, case-insensitive
 	agentPattern := strings.Join(downstreamAgents, "|")
-	// Pattern matches: @(agent)([key])?,? please (case-insensitive)
-	pattern := `(?i)@(` + agentPattern + `)(?:\[([^\]]*)\])?,?\s+please`
+	// Pattern matches: @(agent)([key])? followed by "please" anywhere until end of line (case-insensitive)
+	pattern := `(?i)@(` + agentPattern + `)(?:\[([^\]]*)\])?.*please`
 	re := regexp.MustCompile(pattern)
 
 	matches := re.FindAllStringSubmatchIndex(text, -1)
