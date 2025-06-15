@@ -739,6 +739,22 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 	if prompt != nil && ctx.isInteractive {
 		fmt.Printf("\n%s\n", promptStyle.Render("You: "+prompt.GetContent()))
 	}
+	
+	// Log iteration details for non-interactive mode
+	if prompt != nil && !ctx.isInteractive {
+		effectiveToolsForLogging := filterToolsWithAgent(ctx.agent, ctx.tools)
+		downstreamAgents := ctx.agent.GetDownstreamAgents()
+		peerCount := 0
+		if downstreamAgents != nil {
+			peerCount = len(downstreamAgents)
+		}
+		
+		log.Info("Processing prompt iteration",
+			"agent", ctx.agent.Filename(),
+			"tool_count", len(effectiveToolsForLogging),
+			"peer_count", peerCount,
+			"history_length", len(*ctx.messages))
+	}
 	var message history.Message
 	var err error
 	backoff := initialBackoff
@@ -1279,7 +1295,19 @@ func runMCPHost(ctx context.Context, modelsCfg *ModelsConfig) error {
 	pctx := NewPromptContext(ctx, McpClients, AllTools, agent, &messages, cliTweaker, false)
 	if userPromptCLI != "" {
 		// Non-interactive mode: process the single prompt and exit
-		log.Info("Running in non-interactive mode with provided user prompt.", "prompt", userPromptCLI)
+		effectiveToolsForLogging := filterToolsWithAgent(agent, AllTools)
+		downstreamAgents := agent.GetDownstreamAgents()
+		peerCount := 0
+		if downstreamAgents != nil {
+			peerCount = len(downstreamAgents)
+		}
+		
+		log.Info("Running in non-interactive mode with provided user prompt.", 
+			"prompt", userPromptCLI,
+			"agent", agentNameFlag,
+			"tool_count", len(effectiveToolsForLogging),
+			"peer_count", peerCount,
+			"history_length", len(messages))
 
 		// runPromptIteration with isInteractive=false will use logging for output.
 		// It modifies 'messages' in place.
