@@ -547,8 +547,8 @@ func performActualToolCall(
 func callToolWithCache(
 	ctx context.Context,
 	mcpClient mcpclient.MCPClient,
-	fullToolName string,          // serverName__toolName
-	toolArgsJSON []byte,          // Marshalled arguments from toolCall.GetArguments()
+	fullToolName string, // serverName__toolName
+	toolArgsJSON []byte, // Marshalled arguments from toolCall.GetArguments()
 	precedingMessagesHash string, // Hash of the LLM input context
 	rateLimit time.Duration,
 	isInteractive bool,
@@ -857,7 +857,7 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 		})
 	}
 
-	toolCallResponses := maybeHandleToolCalls(ctx, message, assistantMessage, llmCallHistoryHashForToolCache)
+	toolCallResponses := maybeHandleToolCalls(ctx, message, &assistantMessage, llmCallHistoryHashForToolCache)
 
 	// Add the assistant's message (text and tool_use calls) to history
 	if len(assistantMessage.Content) > 0 {
@@ -974,12 +974,11 @@ func runPromptIteration(ctx *PromptContext, provider history.Provider, prompt *h
 	return nil
 }
 
-func maybeHandleToolCalls(ctx *PromptContext, message history.Message, assistantMessage history.HistoryMessage, llmCallHistoryHashForToolCache string) []history.HistoryMessage {
+func maybeHandleToolCalls(ctx *PromptContext, message history.Message, assistantMessage *history.HistoryMessage, llmCallHistoryHashForToolCache string) []history.HistoryMessage {
 	// Handle tool calls requested by the assistant
 	toolCallResponses := []history.HistoryMessage{} // To store tool responses separately for now
 
 	for _, toolCall := range message.GetToolCalls() {
-		log.Info("🔧 Using tool", "name", toolCall.GetName(), "id", toolCall.GetID())
 
 		inputBytes, errMarshal := json.Marshal(toolCall.GetArguments())
 		if errMarshal != nil {
@@ -987,6 +986,7 @@ func maybeHandleToolCalls(ctx *PromptContext, message history.Message, assistant
 			// Potentially skip this tool call or add an error message
 			continue
 		}
+		log.Info("🔧 Using tool", "name", toolCall.GetName(), "args", string(inputBytes))
 		assistantMessage.Content = append(assistantMessage.Content, history.ContentBlock{
 			Type:  "tool_use",
 			ID:    toolCall.GetID(),
@@ -1959,7 +1959,8 @@ func generateDownstreamAgentPrompt(agents []string) string {
 	}
 
 	const tmplText = `
-NB Here are colleagues available for you to delegate tasks, you can refer to them with their names prefixed with "@" and optional key, you can follow up with detailed requests etc.
+NB Here are peer colleagues available for you to delegate tasks, you can refer to them with their names prefixed with "@" and optional key, 
+you can follow up with detailed requests etc.
 
 ==============
 
@@ -1972,9 +1973,9 @@ NB Here are colleagues available for you to delegate tasks, you can refer to the
 
 =============
 
-Please refer colleagues by name with optional key (any word), there can be many helpers with same speciality. 
+Please refer peers by name with optional key (any word) in square brackets, there can be many helpers with same speciality. 
 Put good efforts to delegate tasks to your colleagues, because they are not aware of your top-level managerial issues.
-Each indexed colleague remembers your previous communications with them and their work they done for you, they are not simply one-shot functions, 
+Each indexed peer remembers your previous communications with them and their work they done for you, they are not simply one-shot functions, 
 so they keep context you gave them. They love concise, exact, precise communication.
 
 <example>
@@ -1989,7 +1990,13 @@ and give recommendation whether I need to go to the hospital
 
 </example>
 
+Remember:
 
+NEVER thank, mention or refer your peer unless you task him. Any other mention will disrupt communication. Only tasks.
+ALWAYS use same key to refer same peer if you used key once. Agent without key is different agent from agent with key.
+ALWAYS use same peer key to continue task for same peer, if possible. 
+Use multiple keys only if there are few unrelated tasks, or if you think that particular peer needs to rest.
+Same peer colleague may do task after task, if it matches its profession, no worry.
 
 `
 	tmpl, err := template.New("downstreamAgents").Parse(tmplText)
