@@ -702,12 +702,43 @@ func ParsePeersReferences(text string, downstreamAgents []string) AgentReference
 		if match[4] != -1 && match[5] != -1 {
 			key = text[match[4]:match[5]]
 		}
-		// Text between lastEnd and start is common text or previous agent's text
+		
+		// Find the start of the agent reference (@agentname[key])
+		atStart := start
+		// Find where the actual content starts (after @agentname[key], optional comma and whitespace)
+		contentStart := start
+		for i := start; i < len(text); i++ {
+			if text[i] == '@' {
+				// Find the end of @agentname[key] part
+				j := i + 1
+				// Skip agent name
+				for j < len(text) && (text[j] != '[' && text[j] != ',' && text[j] != ' ' && text[j] != '\t' && text[j] != '\n') {
+					j++
+				}
+				// Skip optional [key] part
+				if j < len(text) && text[j] == '[' {
+					for j < len(text) && text[j] != ']' {
+						j++
+					}
+					if j < len(text) {
+						j++ // Skip the ']'
+					}
+				}
+				// Skip optional comma and whitespace
+				for j < len(text) && (text[j] == ',' || text[j] == ' ' || text[j] == '\t') {
+					j++
+				}
+				contentStart = j
+				break
+			}
+		}
+		
+		// Text between lastEnd and atStart is common text or previous agent's text
 		if prevAgentRef == nil {
 			// First match, so text before is common
-			commonParts = append(commonParts, strings.TrimSpace(text[lastEnd:start]))
+			commonParts = append(commonParts, strings.TrimSpace(text[lastEnd:atStart]))
 		} else {
-			prevAgentRef.Text = strings.TrimSpace(text[lastEnd:start])
+			prevAgentRef.Text = strings.TrimSpace(text[lastEnd:atStart])
 			refs = append(refs, *prevAgentRef)
 		}
 		prevAgentRef = &AgentReference{
@@ -715,7 +746,7 @@ func ParsePeersReferences(text string, downstreamAgents []string) AgentReference
 			Key:       key,
 			Text:      "",
 		}
-		lastEnd = end
+		lastEnd = contentStart
 	}
 	// Handle trailing text
 	if prevAgentRef != nil {
