@@ -2054,7 +2054,8 @@ Remember:
 
 NEVER thank, mention or refer your peer unless you task him. Any other mention will disrupt communication. Only tasks.
 ALWAYS use same key to refer same peer if you used key once. Agent without key is different agent from agent with key.
-ALWAYS use same peer key to continue task for same peer, if possible. 
+ALWAYS use same peer key to continue task for same peer, if possible.
+ALWAYS be polite and use "please" magic word, otherwise they won't bother. 
 Use multiple keys only if there are few unrelated tasks, or if you think that particular peer needs to rest.
 Same peer colleague may do task after task, if it matches its profession, no worry.
 
